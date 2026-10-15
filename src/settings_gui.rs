@@ -35,8 +35,7 @@ pub struct SettingsState {
     pub closed: bool,
 }
 
-static mut GLOBAL_SETTINGS_STATE: Option<Arc<Mutex<SettingsState>>> = None;
-static mut GLOBAL_HWND: Option<HWND> = None;
+static GLOBAL_SETTINGS_STATE: Mutex<Option<Arc<Mutex<SettingsState>>>> = Mutex::new(None);
 
 unsafe extern "system" fn settings_wndproc(
     hwnd: HWND,
@@ -49,8 +48,9 @@ unsafe extern "system" fn settings_wndproc(
             let x = (lparam.0 & 0xFFFF) as i32;
             let y = ((lparam.0 >> 16) & 0xFFFF) as i32;
 
-            if let Some(state_arc) = &GLOBAL_SETTINGS_STATE {
-                if let Ok(mut state) = state_arc.lock() {
+            if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
+                if let Some(state_arc) = guard.as_ref() {
+                    if let Ok(mut state) = state_arc.lock() {
                     let mut needs_redraw = false;
 
                     // Close [X] (435, 15, 30, 20)
@@ -109,7 +109,8 @@ unsafe extern "system" fn settings_wndproc(
                     }
                 }
             }
-            LRESULT(0)
+        }
+        LRESULT(0)
         }
         windows::Win32::UI::WindowsAndMessaging::WM_DESTROY => {
             PostQuitMessage(0);
@@ -284,9 +285,11 @@ pub fn show_settings_dialog(current_cfg: &Config) -> Option<Config> {
         closed: false,
     }));
 
-    unsafe {
-        GLOBAL_SETTINGS_STATE = Some(state.clone());
+    if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
+        *g = Some(state.clone());
+    }
 
+    unsafe {
         let wc = WNDCLASSW {
             style: windows::Win32::UI::WindowsAndMessaging::WNDCLASS_STYLES(0),
             lpfnWndProc: Some(settings_wndproc),
@@ -324,7 +327,6 @@ pub fn show_settings_dialog(current_cfg: &Config) -> Option<Config> {
             None,
         ).unwrap();
 
-        GLOBAL_HWND = Some(hwnd);
         render_and_update(hwnd, current_cfg);
         let _ = ShowWindow(hwnd, SW_SHOW);
 
@@ -334,9 +336,10 @@ pub fn show_settings_dialog(current_cfg: &Config) -> Option<Config> {
             let _ = TranslateMessage(&msg);
             let _ = DispatchMessageW(&msg);
         }
+    }
 
-        GLOBAL_SETTINGS_STATE = None;
-        GLOBAL_HWND = None;
+    if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
+        *g = None;
     }
 
     let state = state.lock().unwrap();
