@@ -1,0 +1,7 @@
+{
+  "interval_minutes": 30,
+  "display_duration_secs": 4,
+  "position": "top-right",
+  "time_format": "12h",
+  "theme": "monochrome"
+}
