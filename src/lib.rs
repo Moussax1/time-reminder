@@ -1,6 +1,7 @@
 pub mod config;
 pub mod detector;
 pub mod font_8bit;
+pub mod overlay;
 pub mod renderer;
 
 pub fn version() -> &'static str {
