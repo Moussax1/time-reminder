@@ -51,17 +51,34 @@ impl TrayIcon {
         }
 
         unsafe {
+            // Valid Win32 NOTIFYICONDATAW sizes on 64-bit Windows:
+            // 960 (Win7+ full), 952 (V3), 936 (V2), 152 (V1), 976 (Rust struct size fallback)
+            let candidate_sizes: [u32; 5] = [
+                960,
+                952,
+                936,
+                152,
+                std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            ];
             let mut added = false;
-            for _ in 0..5 {
+            let mut working_size = 960;
+
+            for &size in &candidate_sizes {
+                nid.cbSize = size;
                 if Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
                     added = true;
+                    working_size = size;
+                    println!("System tray icon registered successfully (cbSize: {})", size);
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(50));
             }
+
             if !added {
-                eprintln!("[WARN] Shell_NotifyIconW NIM_ADD failed to register tray icon");
+                let err = windows::Win32::Foundation::GetLastError();
+                eprintln!("[WARN] Shell_NotifyIconW NIM_ADD failed across all sizes. LastError: {:?}", err);
             }
+
+            nid.cbSize = working_size;
         }
 
         Ok(Self { nid, hicon })

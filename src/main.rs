@@ -11,7 +11,11 @@ use time_reminder::tray::{
     CMD_RESET_SESSION, CMD_SETTINGS, CMD_TEST_NOTIF, WM_TRAYICON,
 };
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{GENERIC_ALL, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::StationsAndDesktops::{
+    OpenDesktopW, OpenWindowStationW, SetProcessWindowStation, SetThreadDesktop,
+    DESKTOP_CONTROL_FLAGS,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_ALT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
@@ -93,6 +97,14 @@ fn main() {
     println!("Starting Time Reminder daemon...");
 
     unsafe {
+        // Ensure process and thread are attached to interactive Window Station & Desktop
+        if let Ok(winsta) = OpenWindowStationW(w!("WinSta0"), false, GENERIC_ALL.0) {
+            let _ = SetProcessWindowStation(winsta);
+            if let Ok(desktop) = OpenDesktopW(w!("Default"), DESKTOP_CONTROL_FLAGS(0), false, GENERIC_ALL.0) {
+                let _ = SetThreadDesktop(desktop);
+            }
+        }
+
         let class_name = w!("TimeReminderDaemonClass");
         let wc = WNDCLASSW {
             style: windows::Win32::UI::WindowsAndMessaging::WNDCLASS_STYLES(0),
