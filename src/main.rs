@@ -20,8 +20,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotK
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     KillTimer, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer,
-    TranslateMessage, HCURSOR, HICON, WM_DESTROY, WM_HOTKEY, WM_LBUTTONUP, WM_RBUTTONUP,
-    WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    ShowWindow, TranslateMessage, HCURSOR, HICON, SW_SHOW, WM_DESTROY, WM_HOTKEY,
+    WM_LBUTTONUP, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 static mut MAIN_HWND: Option<HWND> = None;
@@ -126,15 +126,19 @@ fn main() {
             class_name,
             w!("Time Reminder Hidden Window"),
             WS_POPUP,
-            0,
-            0,
-            0,
-            0,
+            -10000,
+            -10000,
+            1,
+            1,
             None,
             None,
             windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap(),
             None,
         ).unwrap();
+
+        // Must show the window (placed far offscreen) so IsWindowVisible(hwnd) is TRUE.
+        // This is strictly required for SetForegroundWindow(hwnd) and TrackPopupMenu to work in Windows 10/11.
+        let _ = ShowWindow(hwnd, SW_SHOW);
 
         MAIN_HWND = Some(hwnd);
 
@@ -181,8 +185,8 @@ fn main() {
                 trigger_time_reminder(&mut overlay, &tracker, &config);
             } else if msg.message == WM_TRAYICON {
                 let event = (msg.lParam.0 & 0xFFFF) as u32;
-                // Support Right-click (WM_RBUTTONUP 0x0205), Left-click (WM_LBUTTONUP 0x0202), and WM_CONTEXTMENU (0x007B)
-                if event == WM_RBUTTONUP || event == WM_LBUTTONUP || event == 0x007B {
+                // Support Right-click (WM_RBUTTONUP 0x0205, WM_RBUTTONDOWN 0x0204), Left-click (WM_LBUTTONUP 0x0202), and WM_CONTEXTMENU (0x007B)
+                if event == WM_RBUTTONUP || event == 0x0204 || event == WM_LBUTTONUP || event == 0x007B {
                     let cmd = tray.show_menu(hwnd, config.interval_minutes);
                     match cmd {
                         CMD_INTERVAL_15 => {

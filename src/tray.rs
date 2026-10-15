@@ -8,7 +8,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateIconIndirect, CreatePopupMenu, DestroyIcon,
     DestroyMenu, GetCursorPos, PostMessageW, SetForegroundWindow, TrackPopupMenu,
     ICONINFO, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON,
     WM_NULL, WM_USER, HICON,
 };
 
@@ -121,7 +121,7 @@ impl TrayIcon {
 
             let cmd = TrackPopupMenu(
                 hmenu,
-                TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RIGHTBUTTON,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON,
                 pt.x,
                 pt.y,
                 0,
