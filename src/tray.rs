@@ -1,14 +1,15 @@
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, NIF_ICON, NIF_MESSAGE, NIF_TIP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateIconIndirect, CreatePopupMenu, DestroyIcon,
-    DestroyMenu, GetCursorPos, ICONINFO, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-    SetForegroundWindow, TrackPopupMenu, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD,
-    WM_USER, HICON,
+    DestroyMenu, GetCursorPos, PostMessageW, SetForegroundWindow, TrackPopupMenu,
+    ICONINFO, MF_CHECKED, MF_SEPARATOR, MF_STRING,
+    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    WM_NULL, WM_USER, HICON,
 };
 
 pub const WM_TRAYICON: u32 = WM_USER + 1;
@@ -50,10 +51,26 @@ impl TrayIcon {
         }
 
         unsafe {
-            let _ = Shell_NotifyIconW(NIM_ADD, &nid);
+            let mut added = false;
+            for _ in 0..5 {
+                if Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
+                    added = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            if !added {
+                eprintln!("[WARN] Shell_NotifyIconW NIM_ADD failed to register tray icon");
+            }
         }
 
         Ok(Self { nid, hicon })
+    }
+
+    pub fn re_add(&self) -> bool {
+        unsafe {
+            Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool()
+        }
     }
 
     pub fn show_menu(&self, hwnd: HWND, active_interval: u32) -> u32 {
@@ -87,7 +104,7 @@ impl TrayIcon {
 
             let cmd = TrackPopupMenu(
                 hmenu,
-                TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_LEFTALIGN,
+                TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RIGHTBUTTON,
                 pt.x,
                 pt.y,
                 0,
@@ -96,6 +113,7 @@ impl TrayIcon {
             );
 
             let _ = DestroyMenu(hmenu);
+            let _ = PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0));
             cmd.0 as u32
         }
     }
@@ -110,38 +128,52 @@ impl Drop for TrayIcon {
     }
 }
 
-// Generates a clean 16x16 retro clock icon programmatically
-fn create_clock_icon() -> HICON {
+// Generates a clean 16x16 high-contrast clock icon programmatically
+pub fn create_clock_icon() -> HICON {
     unsafe {
-        let mask = [0xFFu8; 32]; // 16x16 mask
+        // 16x16 1bpp AND mask: 2 bytes per row, 16 rows = 32 bytes
+        // Bit 0 = OPAQUE (color shows), Bit 1 = TRANSPARENT
+        let mut mask = [0xFFu8; 32]; // Default all transparent (1)
         let mut color = [0x00u8; 16 * 16 * 4]; // 32-bit BGRA
 
-        // Draw 16x16 circle with clock hands
+        // Draw 15px circular clock face centered at (7, 7)
         for y in 0..16 {
             for x in 0..16 {
-                let dx = x as i32 - 8;
-                let dy = y as i32 - 8;
+                let dx = x as i32 - 7;
+                let dy = y as i32 - 7;
                 let dist_sq = dx * dx + dy * dy;
 
-                let idx = (y * 16 + x) * 4;
-                if dist_sq >= 36 && dist_sq <= 49 {
-                    // White border
-                    color[idx] = 255;
-                    color[idx + 1] = 255;
-                    color[idx + 2] = 255;
-                    color[idx + 3] = 255;
-                } else if dist_sq < 36 {
-                    // Black inside
-                    color[idx] = 16;
-                    color[idx + 1] = 16;
-                    color[idx + 2] = 16;
-                    color[idx + 3] = 255;
+                let pixel_idx = (y * 16 + x) * 4;
+                let mask_byte = y * 2 + (x / 8);
+                let mask_bit = 7 - (x % 8);
 
-                    // Clock hands (vertical and horizontal line)
-                    if (x == 8 && y >= 4 && y <= 8) || (y == 8 && x >= 8 && x <= 12) {
-                        color[idx] = 255;
-                        color[idx + 1] = 255;
-                        color[idx + 2] = 255;
+                if dist_sq <= 49 {
+                    // Inside or on the circle: mark pixel as OPAQUE (bit = 0)
+                    mask[mask_byte] &= !(1 << mask_bit);
+
+                    if dist_sq >= 36 {
+                        // Outer rim: solid black border (RGB 0, 0, 0) for light mode contrast
+                        color[pixel_idx] = 0;       // B
+                        color[pixel_idx + 1] = 0;   // G
+                        color[pixel_idx + 2] = 0;   // R
+                        color[pixel_idx + 3] = 255; // A
+                    } else {
+                        // Inner dial: bright white (RGB 255, 255, 255) for dark mode contrast
+                        // Clock hands: pointing up at 12 and right at 3
+                        let is_hand = (x == 7 && y >= 3 && y <= 7) || (y == 7 && x >= 7 && x <= 11);
+                        if is_hand {
+                            // Dark black clock hands
+                            color[pixel_idx] = 0;
+                            color[pixel_idx + 1] = 0;
+                            color[pixel_idx + 2] = 0;
+                            color[pixel_idx + 3] = 255;
+                        } else {
+                            // Bright white face
+                            color[pixel_idx] = 255;
+                            color[pixel_idx + 1] = 255;
+                            color[pixel_idx + 2] = 255;
+                            color[pixel_idx + 3] = 255;
+                        }
                     }
                 }
             }

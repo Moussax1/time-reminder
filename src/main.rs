@@ -15,8 +15,9 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_ALT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    KillTimer, PostQuitMessage, RegisterClassW, SetTimer, TranslateMessage, HCURSOR, HICON,
-    WM_DESTROY, WM_HOTKEY, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    KillTimer, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer,
+    TranslateMessage, HCURSOR, HICON, WM_DESTROY, WM_HOTKEY, WM_LBUTTONUP, WM_RBUTTONUP,
+    WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 static mut MAIN_HWND: Option<HWND> = None;
@@ -109,10 +110,10 @@ fn main() {
         RegisterClassW(&wc);
 
         let hwnd = CreateWindowExW(
-            windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE(0),
+            WS_EX_TOOLWINDOW,
             class_name,
             w!("Time Reminder Hidden Window"),
-            WS_OVERLAPPEDWINDOW,
+            WS_POPUP,
             0,
             0,
             0,
@@ -131,6 +132,7 @@ fn main() {
             println!("Global hotkey Alt+T registered.");
         }
 
+        let wm_taskbar_created = RegisterWindowMessageW(w!("TaskbarCreated"));
         let tray = TrayIcon::new(hwnd).expect("Failed to initialize system tray icon");
         let mut overlay = OverlayWindow::new(&config.position, config.display_duration_secs)
             .expect("Failed to create overlay window");
@@ -167,7 +169,8 @@ fn main() {
                 trigger_time_reminder(&mut overlay, &tracker, &config);
             } else if msg.message == WM_TRAYICON {
                 let event = (msg.lParam.0 & 0xFFFF) as u32;
-                if event == WM_RBUTTONUP {
+                // Support Right-click (WM_RBUTTONUP 0x0205), Left-click (WM_LBUTTONUP 0x0202), and WM_CONTEXTMENU (0x007B)
+                if event == WM_RBUTTONUP || event == WM_LBUTTONUP || event == 0x007B {
                     let cmd = tray.show_menu(hwnd, config.interval_minutes);
                     match cmd {
                         CMD_INTERVAL_15 => {
@@ -210,7 +213,18 @@ fn main() {
                         }
                         _ => {}
                     }
+                } else if event == 0x0203 /* WM_LBUTTONDBLCLK */ {
+                    if let Some(new_cfg) = show_settings_dialog(&config) {
+                        config = new_cfg;
+                        let _ = save_config(&config_path, &config);
+                        overlay = OverlayWindow::new(
+                            &config.position,
+                            config.display_duration_secs,
+                        ).expect("Failed to update overlay");
+                    }
                 }
+            } else if wm_taskbar_created != 0 && msg.message == wm_taskbar_created {
+                let _ = tray.re_add();
             }
 
             let _ = TranslateMessage(&msg);
