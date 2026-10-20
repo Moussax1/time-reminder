@@ -1,17 +1,24 @@
 use crate::config::Config;
 use crate::renderer::PixelBuffer;
-use std::sync::{Arc, Mutex};
+use crate::tray::log_debug;
+use std::sync::{Mutex, Once};
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
-    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW,
+    MonitorFromPoint, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, GetSystemMetrics,
-    PostQuitMessage, RegisterClassW, ShowWindow, TranslateMessage,
-    UpdateLayeredWindow, HCURSOR, HICON, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW,
-    ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED, WS_POPUP,
+    BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+    GetCursorPos, GetMessageW, GetSystemMetrics, LoadCursorW, PostMessageW, PostQuitMessage,
+    RegisterClassW, SendMessageW, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TranslateMessage, UpdateLayeredWindow, HICON, HTCAPTION,
+    HWND_TOPMOST, IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_SHOWWINDOW, SW_SHOW,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA, WM_ACTIVATE, WM_CLOSE, WM_DESTROY,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NULL, WM_QUIT, WM_SETCURSOR, WNDCLASSW,
+    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 // Rect for button hit-testing
@@ -24,18 +31,61 @@ pub struct ButtonRect {
 }
 
 impl ButtonRect {
+    pub const fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
+        Self { x, y, w, h }
+    }
+
     pub fn contains(&self, px: i32, py: i32) -> bool {
         px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
     }
 }
 
+pub const BTN_CLOSE_X: ButtonRect = ButtonRect::new(430, 10, 40, 25);
+pub const BTN_BOOT_ON: ButtonRect = ButtonRect::new(35, 260, 200, 30);
+pub const BTN_BOOT_OFF: ButtonRect = ButtonRect::new(245, 260, 200, 30);
+pub const BTN_EXIT: ButtonRect = ButtonRect::new(25, 325, 105, 32);
+pub const BTN_TEST: ButtonRect = ButtonRect::new(140, 325, 105, 32);
+pub const BTN_CANCEL: ButtonRect = ButtonRect::new(255, 325, 85, 32);
+pub const BTN_SAVE: ButtonRect = ButtonRect::new(350, 325, 105, 32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingsAction {
+    Save(Config),
+    TestNotif(Config),
+    ExitApp,
+    Cancel,
+}
+
 pub struct SettingsState {
     pub config: Config,
-    pub changed: bool,
+    pub action: SettingsAction,
+    pub was_active: bool,
     pub closed: bool,
 }
 
-static GLOBAL_SETTINGS_STATE: Mutex<Option<Arc<Mutex<SettingsState>>>> = Mutex::new(None);
+static GLOBAL_SETTINGS_STATE: Mutex<Option<SettingsState>> = Mutex::new(None);
+static REGISTER_SETTINGS_CLASS: Once = Once::new();
+
+fn request_close(hwnd: HWND, action: SettingsAction) {
+    log_debug(&format!("request_close: hwnd={:?}, action={:?}", hwnd, action));
+    let mut already_closed = false;
+    if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
+        if let Some(state) = guard.as_mut() {
+            if state.closed {
+                already_closed = true;
+            } else {
+                state.action = action;
+                state.closed = true;
+            }
+        }
+    }
+    if !already_closed {
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = PostMessageW(HWND::default(), WM_NULL, WPARAM(0), LPARAM(0));
+        }
+    }
+}
 
 unsafe extern "system" fn settings_wndproc(
     hwnd: HWND,
@@ -44,29 +94,69 @@ unsafe extern "system" fn settings_wndproc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN => {
+        WM_LBUTTONDOWN => {
             let x = (lparam.0 & 0xFFFF) as i32;
             let y = ((lparam.0 >> 16) & 0xFFFF) as i32;
 
-            if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
-                if let Some(state_arc) = guard.as_ref() {
-                    if let Ok(mut state) = state_arc.lock() {
-                    let mut needs_redraw = false;
+            // Titlebar drag support (except close button at x: 425..480)
+            if y <= 40 && x < 425 {
+                let _ = ReleaseCapture();
+                let _ = SendMessageW(
+                    hwnd,
+                    WM_NCLBUTTONDOWN,
+                    WPARAM(HTCAPTION as usize),
+                    LPARAM(0),
+                );
+                return LRESULT(0);
+            }
 
-                    // Close [X] (435, 15, 30, 20)
-                    if x >= 430 && x <= 470 && y >= 10 && y <= 35 {
-                        state.closed = true;
-                        let _ = DestroyWindow(hwnd);
-                        PostQuitMessage(0);
-                        return LRESULT(0);
-                    }
+            // Close [X]
+            if BTN_CLOSE_X.contains(x, y) {
+                request_close(hwnd, SettingsAction::Cancel);
+                return LRESULT(0);
+            }
+
+            // Bottom Bar Buttons
+            if BTN_EXIT.contains(x, y) {
+                request_close(hwnd, SettingsAction::ExitApp);
+                return LRESULT(0);
+            }
+            if BTN_TEST.contains(x, y) {
+                let cfg = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
+                    guard.as_ref().map(|s| s.config.clone())
+                } else {
+                    None
+                };
+                if let Some(cfg) = cfg {
+                    request_close(hwnd, SettingsAction::TestNotif(cfg));
+                }
+                return LRESULT(0);
+            }
+            if BTN_CANCEL.contains(x, y) {
+                request_close(hwnd, SettingsAction::Cancel);
+                return LRESULT(0);
+            }
+            if BTN_SAVE.contains(x, y) {
+                let cfg = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
+                    guard.as_ref().map(|s| s.config.clone())
+                } else {
+                    None
+                };
+                if let Some(cfg) = cfg {
+                    request_close(hwnd, SettingsAction::Save(cfg));
+                }
+                return LRESULT(0);
+            }
+
+            if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
+                if let Some(state) = guard.as_mut() {
+                    let mut needs_redraw = false;
 
                     // Intervals: 15m, 30m, 45m, 60m
                     let intervals = [(35, 15), (140, 30), (245, 45), (350, 60)];
                     for (bx, val) in intervals {
                         if x >= bx && x < bx + 95 && y >= 65 && y < 65 + 30 {
                             state.config.interval_minutes = val;
-                            state.changed = true;
                             needs_redraw = true;
                         }
                     }
@@ -78,30 +168,28 @@ unsafe extern "system" fn settings_wndproc(
                         (315, "top-left"),
                     ];
                     for (bx, pos_str) in positions {
-                        if x >= bx && x < bx + 130 && y >= 135 && y < 135 + 30 {
+                        if x >= bx && x < bx + 130 && y >= 130 && y < 130 + 30 {
                             state.config.position = pos_str.to_string();
-                            state.changed = true;
                             needs_redraw = true;
                         }
                     }
 
                     // Formats: 12-Hour (35, w=200), 24-Hour (245, w=200)
-                    if x >= 35 && x < 235 && y >= 205 && y < 205 + 30 {
+                    if x >= 35 && x < 235 && y >= 195 && y < 195 + 30 {
                         state.config.time_format = "12h".to_string();
-                        state.changed = true;
                         needs_redraw = true;
-                    } else if x >= 245 && x < 445 && y >= 205 && y < 205 + 30 {
+                    } else if x >= 245 && x < 445 && y >= 195 && y < 195 + 30 {
                         state.config.time_format = "24h".to_string();
-                        state.changed = true;
                         needs_redraw = true;
                     }
 
-                    // Save Button (320, 265, w=130, h=30)
-                    if x >= 310 && x < 450 && y >= 255 && y < 290 {
-                        state.closed = true;
-                        let _ = DestroyWindow(hwnd);
-                        PostQuitMessage(0);
-                        return LRESULT(0);
+                    // Start on Boot: Enabled (35, w=200), Disabled (245, w=200)
+                    if BTN_BOOT_ON.contains(x, y) {
+                        state.config.run_on_startup = true;
+                        needs_redraw = true;
+                    } else if BTN_BOOT_OFF.contains(x, y) {
+                        state.config.run_on_startup = false;
+                        needs_redraw = true;
                     }
 
                     if needs_redraw {
@@ -109,12 +197,78 @@ unsafe extern "system" fn settings_wndproc(
                     }
                 }
             }
-        }
-        LRESULT(0)
-        }
-        windows::Win32::UI::WindowsAndMessaging::WM_DESTROY => {
-            PostQuitMessage(0);
             LRESULT(0)
+        }
+        WM_KEYDOWN => {
+            let key = wparam.0 as u32;
+            if key == 0x1B /* VK_ESCAPE */ {
+                request_close(hwnd, SettingsAction::Cancel);
+                return LRESULT(0);
+            } else if key == 0x0D /* VK_RETURN */ {
+                let cfg = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
+                    guard.as_ref().map(|s| s.config.clone())
+                } else {
+                    None
+                };
+                if let Some(cfg) = cfg {
+                    request_close(hwnd, SettingsAction::Save(cfg));
+                    return LRESULT(0);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_ACTIVATE => {
+            let active = (wparam.0 & 0xFFFF) as u32;
+            log_debug(&format!("settings_wndproc: WM_ACTIVATE active={}, hwnd={:?}", active, hwnd));
+            if active != 0 {
+                // Window activated
+                if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        state.was_active = true;
+                    }
+                }
+            } else {
+                // WA_INACTIVE: user clicked outside or switched window -> dismiss flyout
+                let should_close = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
+                    if let Some(state) = guard.as_ref() {
+                        log_debug(&format!("settings_wndproc: WA_INACTIVE was_active={}, closed={}", state.was_active, state.closed));
+                        state.was_active && !state.closed
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if should_close {
+                    request_close(hwnd, SettingsAction::Cancel);
+                    return LRESULT(0);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            request_close(hwnd, SettingsAction::Cancel);
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            log_debug("settings_wndproc: WM_DESTROY");
+            if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
+                if let Some(state) = guard.as_mut() {
+                    state.closed = true;
+                }
+            }
+            unsafe {
+                let _ = PostMessageW(HWND::default(), WM_NULL, WPARAM(0), LPARAM(0));
+            }
+            LRESULT(0)
+        }
+        WM_SETCURSOR => {
+            unsafe {
+                let cursor = LoadCursorW(None, IDC_ARROW).unwrap_or_default();
+                SetCursor(cursor);
+            }
+            LRESULT(1)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -122,7 +276,7 @@ unsafe extern "system" fn settings_wndproc(
 
 pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
     let width = 480;
-    let height = 310;
+    let height = 375;
     let mut buf = PixelBuffer::new(width, height, 0x00000000);
 
     let col_bg = 0xFF000000;
@@ -131,6 +285,8 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
     let col_btn_border = 0xFF444444;
     let col_muted = 0xFF888888;
     let col_black = 0xFF000000;
+    let col_exit_bg = 0xFF280A0A;
+    let col_exit_red = 0xFFFF4444;
 
     // Outer Dialog (r=16, 3px white border)
     buf.draw_rounded_rect(2, 2, width as i32 - 4, height as i32 - 4, 16, col_bg, col_white, 3);
@@ -160,11 +316,13 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
         } else {
             label.to_string()
         };
-        buf.draw_text(&text_with_mark, bx + 16, 74, 1, text_col);
+        let text_w = text_with_mark.len() as i32 * 9 - 1;
+        let text_x = bx + (95 - text_w) / 2;
+        buf.draw_text(&text_with_mark, text_x, 74, 1, text_col);
     }
 
     // 2. POSITION SECTION
-    buf.draw_text("SCREEN POSITION:", 25, 118, 1, col_muted);
+    buf.draw_text("SCREEN POSITION:", 25, 115, 1, col_muted);
     let positions = [
         (35, "top-right", "TOP-RIGHT"),
         (175, "top-center", "TOP-CENTER"),
@@ -177,12 +335,14 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
         } else {
             (col_btn_bg, col_btn_border, col_muted)
         };
-        buf.draw_rounded_rect(bx, 135, 130, 30, 6, bg, border, 1);
-        buf.draw_text(label, bx + 14, 144, 1, text_col);
+        buf.draw_rounded_rect(bx, 130, 130, 30, 6, bg, border, 1);
+        let text_w = label.len() as i32 * 9 - 1;
+        let text_x = bx + (130 - text_w) / 2;
+        buf.draw_text(label, text_x, 139, 1, text_col);
     }
 
     // 3. CLOCK FORMAT SECTION
-    buf.draw_text("CLOCK FORMAT:", 25, 188, 1, col_muted);
+    buf.draw_text("CLOCK FORMAT:", 25, 180, 1, col_muted);
     let formats = [
         (35, "12h", "12-HOUR (AM/PM)", 200),
         (245, "24h", "24-HOUR (MILITARY)", 200),
@@ -194,18 +354,60 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
         } else {
             (col_btn_bg, col_btn_border, col_muted)
         };
-        buf.draw_rounded_rect(bx, 205, bw, 30, 6, bg, border, 1);
-        buf.draw_text(label, bx + 16, 214, 1, text_col);
+        buf.draw_rounded_rect(bx, 195, bw, 30, 6, bg, border, 1);
+        let text_w = label.len() as i32 * 9 - 1;
+        let text_x = bx + (bw - text_w) / 2;
+        buf.draw_text(label, text_x, 204, 1, text_col);
+    }
+
+    // 4. START ON BOOT SECTION
+    buf.draw_text("START ON BOOT:", 25, 245, 1, col_muted);
+    let boot_options = [
+        (35, true, "ENABLED", 200),
+        (245, false, "DISABLED", 200),
+    ];
+    for (bx, val, label, bw) in boot_options {
+        let is_selected = cfg.run_on_startup == val;
+        let (bg, border, text_col) = if is_selected {
+            (col_white, col_white, col_black)
+        } else {
+            (col_btn_bg, col_btn_border, col_muted)
+        };
+        buf.draw_rounded_rect(bx, 260, bw, 30, 6, bg, border, 1);
+        let text_with_mark = if is_selected {
+            format!("{} ✓", label)
+        } else {
+            label.to_string()
+        };
+        let text_w = text_with_mark.len() as i32 * 9 - 1;
+        let text_x = bx + (bw - text_w) / 2;
+        buf.draw_text(&text_with_mark, text_x, 269, 1, text_col);
     }
 
     // Divider
     for px in 20..460 {
-        buf.set_pixel(px, 248, col_btn_border);
+        buf.set_pixel(px, 310, col_btn_border);
     }
 
-    // Save Button
-    buf.draw_rounded_rect(320, 258, 135, 32, 6, col_white, col_white, 1);
-    buf.draw_text("SAVE CONFIG", 336, 269, 1, col_black);
+    // 1. EXIT APP (dark red bg, bright red border & text)
+    buf.draw_rounded_rect(25, 325, 105, 32, 6, col_exit_bg, col_exit_red, 1);
+    let exit_w = "EXIT APP".len() as i32 * 9 - 1;
+    buf.draw_text("EXIT APP", 25 + (105 - exit_w) / 2, 337, 1, col_exit_red);
+
+    // 2. TEST OSD (dark bg, white text)
+    buf.draw_rounded_rect(140, 325, 105, 32, 6, col_btn_bg, col_btn_border, 1);
+    let test_w = "TEST OSD".len() as i32 * 9 - 1;
+    buf.draw_text("TEST OSD", 140 + (105 - test_w) / 2, 337, 1, col_white);
+
+    // 3. CANCEL (dark bg, muted text)
+    buf.draw_rounded_rect(255, 325, 85, 32, 6, col_btn_bg, col_btn_border, 1);
+    let cancel_w = "CANCEL".len() as i32 * 9 - 1;
+    buf.draw_text("CANCEL", 255 + (85 - cancel_w) / 2, 337, 1, col_muted);
+
+    // 4. SAVE (white solid bg, black text)
+    buf.draw_rounded_rect(350, 325, 105, 32, 6, col_white, col_white, 1);
+    let save_w = "SAVE".len() as i32 * 9 - 1;
+    buf.draw_text("SAVE", 350 + (105 - save_w) / 2, 337, 1, col_black);
 
     buf
 }
@@ -214,7 +416,17 @@ fn render_and_update(hwnd: HWND, cfg: &Config) {
     let buf = render_settings_buffer(cfg);
     unsafe {
         let screen_dc = GetDC(None);
-        let mem_dc = CreateCompatibleDC(screen_dc);
+        if screen_dc.is_invalid() {
+            return;
+        }
+
+        let mem_dc = match CreateCompatibleDC(screen_dc) {
+            dc if !dc.is_invalid() => dc,
+            _ => {
+                ReleaseDC(None, screen_dc);
+                return;
+            }
+        };
 
         let bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
@@ -234,7 +446,14 @@ fn render_and_update(hwnd: HWND, cfg: &Config) {
         };
 
         let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-        let bitmap = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+        let bitmap = match CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) {
+            Ok(b) if !b.is_invalid() => b,
+            _ => {
+                let _ = DeleteDC(mem_dc);
+                ReleaseDC(None, screen_dc);
+                return;
+            }
+        };
 
         if !bits.is_null() {
             std::ptr::copy_nonoverlapping(
@@ -277,43 +496,123 @@ fn render_and_update(hwnd: HWND, cfg: &Config) {
     }
 }
 
-pub fn show_settings_dialog(current_cfg: &Config) -> Option<Config> {
+pub fn calculate_tray_flyout_pos(
+    width: i32,
+    height: i32,
+    work_area_right: i32,
+    work_area_bottom: i32,
+) -> (i32, i32) {
+    let margin_x = 12;
+    let margin_y = 12;
+    (
+        work_area_right - width - margin_x,
+        work_area_bottom - height - margin_y,
+    )
+}
+
+pub fn get_tray_flyout_position(width: i32, height: i32) -> (i32, i32) {
+    let mut cursor_pt = POINT::default();
+    let _ = unsafe { GetCursorPos(&mut cursor_pt) };
+
+    let mut work_area = windows::Win32::Foundation::RECT::default();
+    let mut found = false;
+
+    unsafe {
+        let hmon = MonitorFromPoint(cursor_pt, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(hmon, &mut mi).as_bool() {
+            work_area = mi.rcWork;
+            if work_area.right > work_area.left && work_area.bottom > work_area.top {
+                found = true;
+            }
+        }
+    }
+
+    if !found {
+        unsafe {
+            let _ = SystemParametersInfoW(
+                SPI_GETWORKAREA,
+                0,
+                Some(&mut work_area as *mut _ as *mut _),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            );
+        }
+    }
+
+    if work_area.right <= work_area.left || work_area.bottom <= work_area.top {
+        let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+        let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+        work_area.right = screen_w;
+        work_area.bottom = screen_h - 48; // Assume standard taskbar height fallback
+    }
+
+    calculate_tray_flyout_pos(width, height, work_area.right, work_area.bottom)
+}
+
+pub fn enable_dpi_awareness() {
+    unsafe {
+        // SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4)
+        if let Ok(user32) = windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll")) {
+            let proc_name = std::ffi::CString::new("SetProcessDpiAwarenessContext").unwrap();
+            if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(
+                user32,
+                windows::core::PCSTR(proc_name.as_ptr() as *const u8),
+            ) {
+                type SetProcessDpiAwarenessContextFn =
+                    unsafe extern "system" fn(isize) -> windows::Win32::Foundation::BOOL;
+                let func: SetProcessDpiAwarenessContextFn = std::mem::transmute(proc);
+                let _ = func(-4);
+            }
+        }
+    }
+}
+
+pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
+    enable_dpi_awareness();
     let class_name = w!("TimeReminderSettingsClass");
-    let state = Arc::new(Mutex::new(SettingsState {
+    let state = SettingsState {
         config: current_cfg.clone(),
-        changed: false,
+        action: SettingsAction::Cancel,
+        was_active: false,
         closed: false,
-    }));
+    };
 
     if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
-        *g = Some(state.clone());
+        *g = Some(state);
     }
 
     unsafe {
-        let wc = WNDCLASSW {
-            style: windows::Win32::UI::WindowsAndMessaging::WNDCLASS_STYLES(0),
-            lpfnWndProc: Some(settings_wndproc),
-            cbClsExtra: 0,
-            cbWndExtra: 0,
-            hInstance: windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap().into(),
-            hIcon: HICON::default(),
-            hCursor: HCURSOR::default(),
-            hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH::default(),
-            lpszMenuName: windows::core::PCWSTR::null(),
-            lpszClassName: class_name,
+        let hinstance = match windows::Win32::System::LibraryLoader::GetModuleHandleW(None) {
+            Ok(h) => h,
+            Err(_) => return SettingsAction::Cancel,
         };
 
-        RegisterClassW(&wc);
+        REGISTER_SETTINGS_CLASS.call_once(|| {
+            let wc = WNDCLASSW {
+                style: windows::Win32::UI::WindowsAndMessaging::WNDCLASS_STYLES(0),
+                lpfnWndProc: Some(settings_wndproc),
+                cbClsExtra: 0,
+                cbWndExtra: 0,
+                hInstance: hinstance.into(),
+                hIcon: HICON::default(),
+                hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+                hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH::default(),
+                lpszMenuName: windows::core::PCWSTR::null(),
+                lpszClassName: class_name,
+            };
+
+            let _ = RegisterClassW(&wc);
+        });
 
         let width = 480;
-        let height = 310;
-        let screen_w = GetSystemMetrics(SM_CXSCREEN);
-        let screen_h = GetSystemMetrics(SM_CYSCREEN);
-        let x = (screen_w - width) / 2;
-        let y = (screen_h - height) / 2;
+        let height = 375;
+        let (x, y) = get_tray_flyout_position(width, height);
 
-        let hwnd = CreateWindowExW(
-            WS_EX_LAYERED,
+        let hwnd = match CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             class_name,
             w!("Time Reminder Settings"),
             WS_POPUP,
@@ -323,29 +622,66 @@ pub fn show_settings_dialog(current_cfg: &Config) -> Option<Config> {
             height,
             None,
             None,
-            windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap(),
+            hinstance,
             None,
-        ).unwrap();
+        ) {
+            Ok(h) if !h.is_invalid() => h,
+            _ => return SettingsAction::Cancel,
+        };
 
         render_and_update(hwnd, current_cfg);
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            x,
+            y,
+            width,
+            height,
+            SWP_SHOWWINDOW,
+        );
         let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetCursor(LoadCursorW(None, IDC_ARROW).unwrap_or_default());
 
-        // Run modal message loop
-        let mut msg = std::mem::zeroed();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+        if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
+            if let Some(s) = g.as_mut() {
+                s.was_active = true;
+            }
+        }
+
+        // Run modal message loop strictly scoped to hwnd so main thread timer/hotkey messages remain queued
+        let mut msg = MSG::default();
+        loop {
+            let is_closed = GLOBAL_SETTINGS_STATE
+                .lock()
+                .map(|g| g.as_ref().map(|s| s.closed).unwrap_or(true))
+                .unwrap_or(true);
+
+            if is_closed {
+                log_debug("show_settings_dialog: breaking modal loop because state.closed is true");
+                break;
+            }
+
+            let res = GetMessageW(&mut msg, hwnd, 0, 0);
+            if res.0 <= 0 || msg.message == WM_QUIT {
+                log_debug(&format!(
+                    "show_settings_dialog: received WM_QUIT or exit, wParam={}",
+                    msg.wParam.0
+                ));
+                PostQuitMessage(msg.wParam.0 as i32);
+                break;
+            }
+
             let _ = TranslateMessage(&msg);
             let _ = DispatchMessageW(&msg);
         }
     }
 
     if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
-        *g = None;
-    }
-
-    let state = state.lock().unwrap();
-    if state.changed {
-        Some(state.config.clone())
+        g.take().map(|s| s.action).unwrap_or(SettingsAction::Cancel)
     } else {
-        None
+        SettingsAction::Cancel
     }
 }
+

@@ -2,17 +2,19 @@ use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, NIF_ICON, NIF_MESSAGE, NIF_TIP,
+    Shell_NotifyIconW, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NOTIFYICONDATAW,
+    NOTIFYICON_VERSION_4, NIF_ICON, NIF_MESSAGE, NIF_TIP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateIconIndirect, CreatePopupMenu, DestroyIcon,
     DestroyMenu, GetCursorPos, PostMessageW, SetForegroundWindow, TrackPopupMenu,
     ICONINFO, MF_CHECKED, MF_SEPARATOR, MF_STRING,
     TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    WM_NULL, WM_USER, HICON,
+    WM_APP, WM_NULL, HICON,
 };
 
-pub const WM_TRAYICON: u32 = WM_USER + 1;
+pub const WM_TRAYICON: u32 = WM_APP + 100;
+pub const NIN_SELECT: u32 = 0x0400;
 
 pub const CMD_INTERVAL_15: u32 = 1001;
 pub const CMD_INTERVAL_30: u32 = 1002;
@@ -22,6 +24,21 @@ pub const CMD_SETTINGS: u32 = 2001;
 pub const CMD_TEST_NOTIF: u32 = 2002;
 pub const CMD_RESET_SESSION: u32 = 2003;
 pub const CMD_EXIT: u32 = 9999;
+
+pub fn log_debug(msg: &str) {
+    use std::io::Write;
+    let lt = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    let line = format!("[{:02}:{:02}:{:02}.{:03}] {}", lt.wHour, lt.wMinute, lt.wSecond, lt.wMilliseconds, msg);
+    println!("{}", line);
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let log_path = parent.join("tray_debug.log");
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+                let _ = writeln!(f, "{}", line);
+            }
+        }
+    }
+}
 
 pub struct TrayIcon {
     nid: NOTIFYICONDATAW,
@@ -51,48 +68,41 @@ impl TrayIcon {
         }
 
         unsafe {
-            // Valid Win32 NOTIFYICONDATAW sizes on 64-bit Windows:
-            // 960 (Win7+ full), 952 (V3), 936 (V2), 152 (V1), 976 (Rust struct size fallback)
-            let candidate_sizes: [u32; 5] = [
-                960,
-                952,
-                936,
-                152,
-                std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-            ];
-            let mut added = false;
-            let mut working_size = 960;
-
-            for &size in &candidate_sizes {
-                nid.cbSize = size;
-                if Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
-                    added = true;
-                    working_size = size;
-                    println!("System tray icon registered successfully (cbSize: {})", size);
-                    break;
-                }
-            }
-
-            if !added {
+            let added = Shell_NotifyIconW(NIM_ADD, &nid).as_bool();
+            if added {
+                log_debug(&format!("Shell_NotifyIconW NIM_ADD succeeded (cbSize: {})", nid.cbSize));
+                nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+                let ver_res = Shell_NotifyIconW(NIM_SETVERSION, &nid);
+                log_debug(&format!("Shell_NotifyIconW NIM_SETVERSION(4) returned {}", ver_res.as_bool()));
+            } else {
                 let err = windows::Win32::Foundation::GetLastError();
-                eprintln!("[WARN] Shell_NotifyIconW NIM_ADD failed across all sizes. LastError: {:?}", err);
+                log_debug(&format!("[WARN] Shell_NotifyIconW NIM_ADD failed. LastError: {:?}", err));
             }
-
-            nid.cbSize = working_size;
         }
 
         Ok(Self { nid, hicon })
     }
 
-    pub fn re_add(&self) -> bool {
+    pub fn re_add(&mut self) -> bool {
         unsafe {
-            Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool()
+            let _ = Shell_NotifyIconW(NIM_DELETE, &self.nid);
+            let ok = Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool();
+            if ok {
+                self.nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+                let _ = Shell_NotifyIconW(NIM_SETVERSION, &self.nid);
+                log_debug("TrayIcon re-added successfully");
+            }
+            ok
         }
     }
 
     pub fn show_menu(&self, hwnd: HWND, active_interval: u32) -> u32 {
         unsafe {
-            let hmenu = CreatePopupMenu().unwrap();
+            log_debug("Creating popup menu...");
+            let hmenu = match CreatePopupMenu() {
+                Ok(m) if !m.is_invalid() => m,
+                _ => return 0,
+            };
 
             let _ = AppendMenuW(hmenu, MF_STRING, CMD_INTERVAL_15 as usize, w!("Every 15 Minutes"));
             let _ = AppendMenuW(hmenu, MF_STRING, CMD_INTERVAL_30 as usize, w!("Every 30 Minutes"));
@@ -117,7 +127,10 @@ impl TrayIcon {
 
             let mut pt = POINT { x: 0, y: 0 };
             let _ = GetCursorPos(&mut pt);
-            let _ = SetForegroundWindow(hwnd);
+            log_debug(&format!("show_menu: cursor pos=({}, {})", pt.x, pt.y));
+
+            let fg = SetForegroundWindow(hwnd);
+            log_debug(&format!("show_menu: SetForegroundWindow returned {:?}", fg));
 
             let cmd = TrackPopupMenu(
                 hmenu,
@@ -128,6 +141,8 @@ impl TrayIcon {
                 hwnd,
                 None,
             );
+            let err = windows::Win32::Foundation::GetLastError();
+            log_debug(&format!("show_menu: TrackPopupMenu returned cmd={}, LastError={:?}", cmd.0, err));
 
             let _ = DestroyMenu(hmenu);
             let _ = PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0));
@@ -207,7 +222,7 @@ pub fn create_clock_icon() -> HICON {
             hbmColor: hbm_color,
         };
 
-        let icon = CreateIconIndirect(&icon_info).unwrap();
+        let icon = CreateIconIndirect(&icon_info).unwrap_or_default();
         let _ = DeleteObject(hbm_mask);
         let _ = DeleteObject(hbm_color);
         icon
