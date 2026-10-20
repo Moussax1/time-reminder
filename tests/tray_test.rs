@@ -6,7 +6,10 @@ use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO
 fn test_clock_icon_mask_and_dimensions() {
     unsafe {
         let hicon = create_clock_icon();
-        assert!(!hicon.is_invalid(), "create_clock_icon returned invalid icon");
+        assert!(
+            !hicon.is_invalid(),
+            "create_clock_icon returned invalid icon"
+        );
 
         let mut info = ICONINFO::default();
         let res = GetIconInfo(hicon, &mut info);
@@ -32,6 +35,7 @@ fn test_clock_icon_mask_and_dimensions() {
 
 #[test]
 fn test_tray_registration_and_v4_mode() {
+    use time_reminder::tray::TrayIcon;
     use windows::core::w;
     use windows::Win32::Foundation::GENERIC_ALL;
     use windows::Win32::System::StationsAndDesktops::{
@@ -39,10 +43,9 @@ fn test_tray_registration_and_v4_mode() {
         DESKTOP_CONTROL_FLAGS,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, RegisterClassW, DefWindowProcW,
-        WNDCLASSW, WS_OVERLAPPEDWINDOW,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, WNDCLASSW,
+        WS_OVERLAPPEDWINDOW,
     };
-    use time_reminder::tray::TrayIcon;
 
     unsafe extern "system" fn dummy_wndproc(
         hwnd: windows::Win32::Foundation::HWND,
@@ -56,7 +59,12 @@ fn test_tray_registration_and_v4_mode() {
     unsafe {
         if let Ok(winsta) = OpenWindowStationW(w!("WinSta0"), false, GENERIC_ALL.0) {
             let _ = SetProcessWindowStation(winsta);
-            if let Ok(desktop) = OpenDesktopW(w!("Default"), DESKTOP_CONTROL_FLAGS(0), false, GENERIC_ALL.0) {
+            if let Ok(desktop) = OpenDesktopW(
+                w!("Default"),
+                DESKTOP_CONTROL_FLAGS(0),
+                false,
+                GENERIC_ALL.0,
+            ) {
                 let _ = SetThreadDesktop(desktop);
             }
         }
@@ -64,7 +72,9 @@ fn test_tray_registration_and_v4_mode() {
         let class_name = w!("TestTrayRegClass");
         let wc = WNDCLASSW {
             lpfnWndProc: Some(dummy_wndproc),
-            hInstance: windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap().into(),
+            hInstance: windows::Win32::System::LibraryLoader::GetModuleHandleW(None)
+                .unwrap()
+                .into(),
             lpszClassName: class_name,
             ..Default::default()
         };
@@ -75,11 +85,16 @@ fn test_tray_registration_and_v4_mode() {
             class_name,
             w!("TestTrayCarrier"),
             WS_OVERLAPPEDWINDOW,
-            0, 0, 0, 0,
-            None, None,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
             windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap(),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut tray = TrayIcon::new(hwnd).expect("TrayIcon::new failed");
         assert!(tray.re_add(), "TrayIcon::re_add failed");

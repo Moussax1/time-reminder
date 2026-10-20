@@ -25,15 +25,45 @@ fn test_button_rect_contains() {
 
 #[test]
 fn test_settings_actions_and_hit_testing() {
-    use time_reminder::settings_gui::{ButtonRect, SettingsAction};
     use time_reminder::config::Config;
+    use time_reminder::settings_gui::{ButtonRect, SettingsAction};
 
-    let boot_on_btn = ButtonRect { x: 35, y: 260, w: 200, h: 30 };
-    let boot_off_btn = ButtonRect { x: 245, y: 260, w: 200, h: 30 };
-    let exit_btn = ButtonRect { x: 25, y: 325, w: 105, h: 32 };
-    let test_btn = ButtonRect { x: 140, y: 325, w: 105, h: 32 };
-    let cancel_btn = ButtonRect { x: 255, y: 325, w: 85, h: 32 };
-    let save_btn = ButtonRect { x: 350, y: 325, w: 105, h: 32 };
+    let boot_on_btn = ButtonRect {
+        x: 35,
+        y: 260,
+        w: 200,
+        h: 30,
+    };
+    let boot_off_btn = ButtonRect {
+        x: 245,
+        y: 260,
+        w: 200,
+        h: 30,
+    };
+    let exit_btn = ButtonRect {
+        x: 25,
+        y: 325,
+        w: 105,
+        h: 32,
+    };
+    let test_btn = ButtonRect {
+        x: 140,
+        y: 325,
+        w: 105,
+        h: 32,
+    };
+    let cancel_btn = ButtonRect {
+        x: 255,
+        y: 325,
+        w: 85,
+        h: 32,
+    };
+    let save_btn = ButtonRect {
+        x: 350,
+        y: 325,
+        w: 105,
+        h: 32,
+    };
 
     // Point in boot options
     assert!(boot_on_btn.contains(50, 270));
@@ -111,5 +141,3 @@ fn test_calculate_tray_flyout_pos() {
     assert_eq!(x2, 3840 - 480 - 12);
     assert_eq!(y2, 1032 - 310 - 12);
 }
-
-

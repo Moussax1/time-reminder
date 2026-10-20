@@ -5,18 +5,20 @@ fn test_default_config_values() {
     assert_eq!(cfg.display_duration_secs, 4);
     assert_eq!(cfg.time_format, "12h");
     assert_eq!(cfg.position, "top-right");
-    assert_eq!(cfg.run_on_startup, false);
+    assert!(!cfg.run_on_startup);
 }
 
 #[test]
 fn test_config_serialization_roundtrip() {
-    let mut cfg = time_reminder::config::Config::default();
-    cfg.run_on_startup = true;
+    let cfg = time_reminder::config::Config {
+        run_on_startup: true,
+        ..Default::default()
+    };
     let json = serde_json::to_string_pretty(&cfg).unwrap();
     let loaded: time_reminder::config::Config = serde_json::from_str(&json).unwrap();
     assert_eq!(cfg.interval_minutes, loaded.interval_minutes);
     assert_eq!(cfg.position, loaded.position);
-    assert_eq!(loaded.run_on_startup, true);
+    assert!(loaded.run_on_startup);
 }
 
 #[test]
@@ -31,7 +33,7 @@ fn test_run_on_startup_backward_compatibility() {
     }"#;
     let loaded: time_reminder::config::Config = serde_json::from_str(legacy_json).unwrap();
     assert_eq!(loaded.interval_minutes, 15);
-    assert_eq!(loaded.run_on_startup, false);
+    assert!(!loaded.run_on_startup);
 }
 
 #[test]
@@ -42,12 +44,12 @@ fn test_run_on_startup_registry_functions() {
     // Verify enabling
     let res = set_run_on_startup(true);
     assert!(res.is_ok());
-    assert_eq!(check_run_on_startup(), true);
+    assert!(check_run_on_startup());
 
     // Verify disabling
     let res_disable = set_run_on_startup(false);
     assert!(res_disable.is_ok());
-    assert_eq!(check_run_on_startup(), false);
+    assert!(!check_run_on_startup());
 
     // Restore initial state
     let _ = set_run_on_startup(initial);
@@ -80,8 +82,10 @@ fn test_parse_hotkey() {
 #[test]
 fn test_atomic_save_config() {
     let temp_path = std::env::temp_dir().join("test_atomic_config.json");
-    let mut cfg = time_reminder::config::Config::default();
-    cfg.interval_minutes = 45;
+    let cfg = time_reminder::config::Config {
+        interval_minutes: 45,
+        ..Default::default()
+    };
     let res = time_reminder::config::save_config(&temp_path, &cfg);
     assert!(res.is_ok());
     let loaded = time_reminder::config::load_config(&temp_path);
@@ -91,4 +95,3 @@ fn test_atomic_save_config() {
     assert!(!tmp_path.exists());
     let _ = std::fs::remove_file(&temp_path);
 }
-

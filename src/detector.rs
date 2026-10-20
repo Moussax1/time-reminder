@@ -6,7 +6,9 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN};
+use windows::Win32::UI::Shell::{
+    SHQueryUserNotificationState, QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId, SM_CXSCREEN,
     SM_CYSCREEN,
@@ -16,6 +18,8 @@ pub fn is_process_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
+    // SAFETY: OpenProcess requests PROCESS_QUERY_LIMITED_INFORMATION, which is the least-privileged
+    // query right. If opened, GetExitCodeProcess checks status and CloseHandle closes the handle cleanly.
     unsafe {
         if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             let mut exit_code = 0u32;
@@ -93,6 +97,12 @@ impl SessionTracker {
     }
 }
 
+impl Default for SessionTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn format_session(d: Duration) -> String {
     let total_secs = d.as_secs();
     let hours = total_secs / 3600;
@@ -101,6 +111,8 @@ pub fn format_session(d: Duration) -> String {
 }
 
 pub fn detect_game_fullscreen() -> (bool, Option<u32>) {
+    // SAFETY: Queries the system foreground window, PID, shell notification state,
+    // and monitor bounds. All Win32 structs (RECT, MONITORINFO) are properly zero-initialized with cbSize.
     unsafe {
         let hwnd = GetForegroundWindow();
         let mut pid = 0u32;
@@ -127,13 +139,21 @@ pub fn detect_game_fullscreen() -> (bool, Option<u32>) {
                 };
                 if GetMonitorInfoW(hmon, &mut mi).as_bool() {
                     let m = mi.rcMonitor;
-                    if rect.left <= m.left && rect.top <= m.top && rect.right >= m.right && rect.bottom >= m.bottom {
+                    if rect.left <= m.left
+                        && rect.top <= m.top
+                        && rect.right >= m.right
+                        && rect.bottom >= m.bottom
+                    {
                         return (true, opt_pid);
                     }
                 } else {
                     let screen_w = GetSystemMetrics(SM_CXSCREEN);
                     let screen_h = GetSystemMetrics(SM_CYSCREEN);
-                    if rect.left <= 0 && rect.top <= 0 && rect.right >= screen_w && rect.bottom >= screen_h {
+                    if rect.left <= 0
+                        && rect.top <= 0
+                        && rect.right >= screen_w
+                        && rect.bottom >= screen_h
+                    {
                         return (true, opt_pid);
                     }
                 }
@@ -146,4 +166,3 @@ pub fn detect_game_fullscreen() -> (bool, Option<u32>) {
 pub fn is_game_fullscreen() -> bool {
     detect_game_fullscreen().0
 }
-

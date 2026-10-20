@@ -6,19 +6,19 @@ use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW,
-    MonitorFromPoint, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
-    MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    MonitorFromPoint, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+    DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetCursorPos, GetMessageW, GetSystemMetrics, LoadCursorW, PostMessageW, PostQuitMessage,
     RegisterClassW, SendMessageW, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, TranslateMessage, UpdateLayeredWindow, HICON, HTCAPTION,
-    HWND_TOPMOST, IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_SHOWWINDOW, SW_SHOW,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA, WM_ACTIVATE, WM_CLOSE, WM_DESTROY,
-    WM_KEYDOWN, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NULL, WM_QUIT, WM_SETCURSOR, WNDCLASSW,
-    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SystemParametersInfoW, TranslateMessage, UpdateLayeredWindow, HICON, HTCAPTION, HWND_TOPMOST,
+    IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_SHOWWINDOW, SW_SHOW,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA, WM_ACTIVATE, WM_CLOSE, WM_DESTROY, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NULL, WM_QUIT, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 // Rect for button hit-testing
@@ -36,7 +36,7 @@ impl ButtonRect {
     }
 
     pub fn contains(&self, px: i32, py: i32) -> bool {
-        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+        (self.x..self.x + self.w).contains(&px) && (self.y..self.y + self.h).contains(&py)
     }
 }
 
@@ -67,7 +67,10 @@ static GLOBAL_SETTINGS_STATE: Mutex<Option<SettingsState>> = Mutex::new(None);
 static REGISTER_SETTINGS_CLASS: Once = Once::new();
 
 fn request_close(hwnd: HWND, action: SettingsAction) {
-    log_debug(&format!("request_close: hwnd={:?}, action={:?}", hwnd, action));
+    log_debug(&format!(
+        "request_close: hwnd={:?}, action={:?}",
+        hwnd, action
+    ));
     let mut already_closed = false;
     if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
         if let Some(state) = guard.as_mut() {
@@ -80,6 +83,8 @@ fn request_close(hwnd: HWND, action: SettingsAction) {
         }
     }
     if !already_closed {
+        // SAFETY: hwnd is the valid settings dialog window handle. DestroyWindow cleans up
+        // the Win32 window resources and PostMessageW unblocks any waiting message loops.
         unsafe {
             let _ = DestroyWindow(hwnd);
             let _ = PostMessageW(HWND::default(), WM_NULL, WPARAM(0), LPARAM(0));
@@ -100,6 +105,8 @@ unsafe extern "system" fn settings_wndproc(
 
             // Titlebar drag support (except close button at x: 425..480)
             if y <= 40 && x < 425 {
+                // SAFETY: ReleaseCapture and SendMessageW with WM_NCLBUTTONDOWN and HTCAPTION
+                // delegate standard window dragging to the Windows shell without capturing cursor.
                 let _ = ReleaseCapture();
                 let _ = SendMessageW(
                     hwnd,
@@ -155,30 +162,26 @@ unsafe extern "system" fn settings_wndproc(
                     // Intervals: 15m, 30m, 45m, 60m
                     let intervals = [(35, 15), (140, 30), (245, 45), (350, 60)];
                     for (bx, val) in intervals {
-                        if x >= bx && x < bx + 95 && y >= 65 && y < 65 + 30 {
+                        if (bx..bx + 95).contains(&x) && (65..65 + 30).contains(&y) {
                             state.config.interval_minutes = val;
                             needs_redraw = true;
                         }
                     }
 
                     // Positions: Top-Right (35), Top-Center (175), Top-Left (315)
-                    let positions = [
-                        (35, "top-right"),
-                        (175, "top-center"),
-                        (315, "top-left"),
-                    ];
+                    let positions = [(35, "top-right"), (175, "top-center"), (315, "top-left")];
                     for (bx, pos_str) in positions {
-                        if x >= bx && x < bx + 130 && y >= 130 && y < 130 + 30 {
+                        if (bx..bx + 130).contains(&x) && (130..130 + 30).contains(&y) {
                             state.config.position = pos_str.to_string();
                             needs_redraw = true;
                         }
                     }
 
                     // Formats: 12-Hour (35, w=200), 24-Hour (245, w=200)
-                    if x >= 35 && x < 235 && y >= 195 && y < 195 + 30 {
+                    if (35..235).contains(&x) && (195..195 + 30).contains(&y) {
                         state.config.time_format = "12h".to_string();
                         needs_redraw = true;
-                    } else if x >= 245 && x < 445 && y >= 195 && y < 195 + 30 {
+                    } else if (245..445).contains(&x) && (195..195 + 30).contains(&y) {
                         state.config.time_format = "24h".to_string();
                         needs_redraw = true;
                     }
@@ -201,10 +204,14 @@ unsafe extern "system" fn settings_wndproc(
         }
         WM_KEYDOWN => {
             let key = wparam.0 as u32;
-            if key == 0x1B /* VK_ESCAPE */ {
+            if key == 0x1B
+            /* VK_ESCAPE */
+            {
                 request_close(hwnd, SettingsAction::Cancel);
                 return LRESULT(0);
-            } else if key == 0x0D /* VK_RETURN */ {
+            } else if key == 0x0D
+            /* VK_RETURN */
+            {
                 let cfg = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
                     guard.as_ref().map(|s| s.config.clone())
                 } else {
@@ -219,7 +226,10 @@ unsafe extern "system" fn settings_wndproc(
         }
         WM_ACTIVATE => {
             let active = (wparam.0 & 0xFFFF) as u32;
-            log_debug(&format!("settings_wndproc: WM_ACTIVATE active={}, hwnd={:?}", active, hwnd));
+            log_debug(&format!(
+                "settings_wndproc: WM_ACTIVATE active={}, hwnd={:?}",
+                active, hwnd
+            ));
             if active != 0 {
                 // Window activated
                 if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
@@ -231,7 +241,10 @@ unsafe extern "system" fn settings_wndproc(
                 // WA_INACTIVE: user clicked outside or switched window -> dismiss flyout
                 let should_close = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
                     if let Some(state) = guard.as_ref() {
-                        log_debug(&format!("settings_wndproc: WA_INACTIVE was_active={}, closed={}", state.was_active, state.closed));
+                        log_debug(&format!(
+                            "settings_wndproc: WA_INACTIVE was_active={}, closed={}",
+                            state.was_active, state.closed
+                        ));
                         state.was_active && !state.closed
                     } else {
                         false
@@ -289,7 +302,16 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
     let col_exit_red = 0xFFFF4444;
 
     // Outer Dialog (r=16, 3px white border)
-    buf.draw_rounded_rect(2, 2, width as i32 - 4, height as i32 - 4, 16, col_bg, col_white, 3);
+    buf.draw_rounded_rect(
+        2,
+        2,
+        width as i32 - 4,
+        height as i32 - 4,
+        16,
+        col_bg,
+        col_white,
+        3,
+    );
 
     // Titlebar
     buf.draw_text("► TIME REMINDER CONFIG", 25, 20, 1, col_white);
@@ -302,7 +324,12 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
 
     // 1. INTERVAL SECTION
     buf.draw_text("INTERVAL:", 25, 50, 1, col_muted);
-    let intervals = [(35, 15, "15M"), (140, 30, "30M"), (245, 45, "45M"), (350, 60, "60M")];
+    let intervals = [
+        (35, 15, "15M"),
+        (140, 30, "30M"),
+        (245, 45, "45M"),
+        (350, 60, "60M"),
+    ];
     for (bx, val, label) in intervals {
         let is_selected = cfg.interval_minutes == val;
         let (bg, border, text_col) = if is_selected {
@@ -362,10 +389,7 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
 
     // 4. START ON BOOT SECTION
     buf.draw_text("START ON BOOT:", 25, 245, 1, col_muted);
-    let boot_options = [
-        (35, true, "ENABLED", 200),
-        (245, false, "DISABLED", 200),
-    ];
+    let boot_options = [(35, true, "ENABLED", 200), (245, false, "DISABLED", 200)];
     for (bx, val, label, bw) in boot_options {
         let is_selected = cfg.run_on_startup == val;
         let (bg, border, text_col) = if is_selected {
@@ -414,6 +438,8 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
 
 fn render_and_update(hwnd: HWND, cfg: &Config) {
     let buf = render_settings_buffer(cfg);
+    // SAFETY: Allocates and paints a temporary 32-bit DIB section onto the layered window DC.
+    // Screen DC and memory DC are properly released and deleted on all code paths.
     unsafe {
         let screen_dc = GetDC(None);
         if screen_dc.is_invalid() {
@@ -456,6 +482,8 @@ fn render_and_update(hwnd: HWND, cfg: &Config) {
         };
 
         if !bits.is_null() {
+            // SAFETY: bits is allocated with size buf.width * buf.height * 4 by CreateDIBSection.
+            // buf.data is a contiguous vector matching these dimensions.
             std::ptr::copy_nonoverlapping(
                 buf.data.as_ptr() as *const u8,
                 bits as *mut u8,
@@ -464,8 +492,8 @@ fn render_and_update(hwnd: HWND, cfg: &Config) {
         }
 
         let old_bmp = SelectObject(mem_dc, bitmap);
-        let mut pt_src = POINT { x: 0, y: 0 };
-        let mut sz = SIZE {
+        let pt_src = POINT { x: 0, y: 0 };
+        let sz = SIZE {
             cx: buf.width as i32,
             cy: buf.height as i32,
         };
@@ -481,9 +509,9 @@ fn render_and_update(hwnd: HWND, cfg: &Config) {
             hwnd,
             screen_dc,
             None,
-            Some(&mut sz),
+            Some(&sz),
             mem_dc,
-            Some(&mut pt_src),
+            Some(&pt_src),
             COLORREF(0),
             Some(&blend),
             ULW_ALPHA,
@@ -512,11 +540,13 @@ pub fn calculate_tray_flyout_pos(
 
 pub fn get_tray_flyout_position(width: i32, height: i32) -> (i32, i32) {
     let mut cursor_pt = POINT::default();
+    // SAFETY: GetCursorPos retrieves current mouse position into a zeroed POINT struct.
     let _ = unsafe { GetCursorPos(&mut cursor_pt) };
 
     let mut work_area = windows::Win32::Foundation::RECT::default();
     let mut found = false;
 
+    // SAFETY: Querying nearest monitor and its work area bounds via Win32 API.
     unsafe {
         let hmon = MonitorFromPoint(cursor_pt, MONITOR_DEFAULTTONEAREST);
         let mut mi = MONITORINFO {
@@ -532,6 +562,7 @@ pub fn get_tray_flyout_position(width: i32, height: i32) -> (i32, i32) {
     }
 
     if !found {
+        // SAFETY: Fallback to primary work area using SystemParametersInfoW with SPI_GETWORKAREA.
         unsafe {
             let _ = SystemParametersInfoW(
                 SPI_GETWORKAREA,
@@ -543,6 +574,7 @@ pub fn get_tray_flyout_position(width: i32, height: i32) -> (i32, i32) {
     }
 
     if work_area.right <= work_area.left || work_area.bottom <= work_area.top {
+        // SAFETY: Querying standard system metrics for primary monitor fallback.
         let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         work_area.right = screen_w;
@@ -553,9 +585,13 @@ pub fn get_tray_flyout_position(width: i32, height: i32) -> (i32, i32) {
 }
 
 pub fn enable_dpi_awareness() {
+    // SAFETY: Dynamically queries user32.dll for SetProcessDpiAwarenessContext, which is
+    // available on Windows 10/11. Does nothing if not present, preventing crashes on older OS versions.
     unsafe {
         // SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4)
-        if let Ok(user32) = windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll")) {
+        if let Ok(user32) =
+            windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll"))
+        {
             let proc_name = std::ffi::CString::new("SetProcessDpiAwarenessContext").unwrap();
             if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(
                 user32,
@@ -584,6 +620,8 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
         *g = Some(state);
     }
 
+    // SAFETY: Initializes the modal settings GUI window, registers window class,
+    // and pumps messages scoped to this window until dismissed.
     unsafe {
         let hinstance = match windows::Win32::System::LibraryLoader::GetModuleHandleW(None) {
             Ok(h) => h,
@@ -630,15 +668,7 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
         };
 
         render_and_update(hwnd, current_cfg);
-        let _ = SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            x,
-            y,
-            width,
-            height,
-            SWP_SHOWWINDOW,
-        );
+        let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = BringWindowToTop(hwnd);
         let _ = SetForegroundWindow(hwnd);
@@ -678,10 +708,14 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
         }
     }
 
-    if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
+    let action = if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
         g.take().map(|s| s.action).unwrap_or(SettingsAction::Cancel)
     } else {
         SettingsAction::Cancel
-    }
-}
+    };
 
+    // Trim process working set after closing the configuration GUI to free all dialog allocations
+    crate::trim_working_set();
+
+    action
+}

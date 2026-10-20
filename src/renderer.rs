@@ -72,6 +72,7 @@ impl PixelBuffer {
     }
 
     // Draws filled rounded rectangle with smooth anti-aliased border and fill
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_rounded_rect(
         &mut self,
         x: i32,
@@ -169,7 +170,7 @@ impl PixelBuffer {
                     }
                 }
             }
-            cur_x += 8 * scale + 1 * scale; // character width + spacing
+            cur_x += 8 * scale + scale; // character width + spacing
         }
     }
 }
@@ -186,17 +187,15 @@ pub fn render_split_pod_card(
     let mut buf = PixelBuffer::new(width, height, 0x00000000); // Transparent background
 
     // Colors
-    let color_outer_bg = 0xFF000000;      // Pure Black
-    let color_outer_border = 0xFFFFFFFF;  // Crisp White
-    let color_inner_bg = 0xFF141414;      // Deep Charcoal
-    let color_inner_border = 0xFF555555;  // Muted White border
+    let color_outer_bg = 0xFF000000; // Pure Black
+    let color_outer_border = 0xFFFFFFFF; // Crisp White
+    let color_inner_bg = 0xFF141414; // Deep Charcoal
+    let color_inner_border = 0xFF555555; // Muted White border
     let color_text_white = 0xFFFFFFFF;
     let color_text_muted = 0xFF888888;
 
     // 1. Outer Card: width=266, height=62, r=16, border=2
-    buf.draw_rounded_rect(
-        2, 2, 266, 62, 16, color_outer_bg, color_outer_border, 2,
-    );
+    buf.draw_rounded_rect(2, 2, 266, 62, 16, color_outer_bg, color_outer_border, 2);
 
     // 2. Left Pod: Clock Pod: x=10, y=8, width=140, height=50, r=12, border=1
     let pod_x = 10;
@@ -204,7 +203,14 @@ pub fn render_split_pod_card(
     let pod_w = 140;
     let pod_h = 50;
     buf.draw_rounded_rect(
-        pod_x, pod_y, pod_w, pod_h, 12, color_inner_bg, color_inner_border, 1,
+        pod_x,
+        pod_y,
+        pod_w,
+        pod_h,
+        12,
+        color_inner_bg,
+        color_inner_border,
+        1,
     );
 
     let time_len = time_str.len() as i32;
@@ -212,9 +218,14 @@ pub fn render_split_pod_card(
     let cursor_w = 16;
     let cursor_gap = 4;
     let ampm_gap = 5;
-    let ampm_w = if ampm_str.is_empty() { 0 } else { ampm_str.len() as i32 * 9 - 1 };
+    let ampm_w = if ampm_str.is_empty() {
+        0
+    } else {
+        ampm_str.len() as i32 * 9 - 1
+    };
 
-    let total_clock_w = cursor_w + cursor_gap + time_w + if ampm_w > 0 { ampm_gap + ampm_w } else { 0 };
+    let total_clock_w =
+        cursor_w + cursor_gap + time_w + if ampm_w > 0 { ampm_gap + ampm_w } else { 0 };
     let start_x = pod_x + ((pod_w - total_clock_w) / 2).max(4);
 
     let cursor_x = start_x;

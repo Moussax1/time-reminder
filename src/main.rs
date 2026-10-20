@@ -15,8 +15,8 @@ use windows::Win32::System::StationsAndDesktops::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    KillTimer, PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, KillTimer,
+    PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer,
     TranslateMessage, HCURSOR, HICON, PM_REMOVE, WM_APP, WM_CONTEXTMENU, WM_DESTROY, WM_HOTKEY,
     WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
@@ -47,7 +47,10 @@ unsafe extern "system" fn main_wndproc(
         WM_TRAYICON => {
             let event = (lparam.0 & 0xFFFF) as u32;
             let id = ((lparam.0 >> 16) & 0xFFFF) as u32;
-            log_debug(&format!("main_wndproc: WM_TRAYICON event=0x{:04X} ({}), id={}", event, event, id));
+            log_debug(&format!(
+                "main_wndproc: WM_TRAYICON event=0x{:04X} ({}), id={}",
+                event, event, id
+            ));
 
             // Forward actionable events (WM_CONTEXTMENU, NIN_SELECT, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP)
             // directly to the thread message queue so GetMessageW executes show_settings_dialog
@@ -55,9 +58,13 @@ unsafe extern "system" fn main_wndproc(
                 || event == NIN_SELECT
                 || event == 0x0203 /* WM_LBUTTONDBLCLK */
                 || event == 0x0202 /* WM_LBUTTONUP */
-                || event == 0x0205 /* WM_RBUTTONUP */
+                || event == 0x0205
+            /* WM_RBUTTONUP */
             {
-                log_debug(&format!("main_wndproc: Posting WM_APP_TRAY_TRIGGER (event=0x{:04X}) to thread queue", event));
+                log_debug(&format!(
+                    "main_wndproc: Posting WM_APP_TRAY_TRIGGER (event=0x{:04X}) to thread queue",
+                    event
+                ));
                 let _ = PostMessageW(hwnd, WM_APP_TRAY_TRIGGER, wparam, lparam);
             }
             LRESULT(0)
@@ -67,9 +74,13 @@ unsafe extern "system" fn main_wndproc(
 }
 
 fn enable_dpi_awareness() {
+    // SAFETY: Dynamically queries user32.dll for SetProcessDpiAwarenessContext, which is
+    // available on Windows 10/11. Does nothing if not present, preventing crashes on older OS versions.
     unsafe {
         // SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4)
-        if let Ok(user32) = windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll")) {
+        if let Ok(user32) =
+            windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll"))
+        {
             let proc_name = std::ffi::CString::new("SetProcessDpiAwarenessContext").unwrap();
             if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(
                 user32,
@@ -86,9 +97,8 @@ fn enable_dpi_awareness() {
 
 fn trigger_time_reminder(overlay: &mut OverlayWindow, tracker: &SessionTracker, config: &Config) {
     // Windows local time via SystemTime conversion
-    let local = unsafe {
-        windows::Win32::System::SystemInformation::GetLocalTime()
-    };
+    // SAFETY: GetLocalTime safely queries current local time into a SYSTEMTIME structure.
+    let local = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
 
     let (time_str, ampm_str) = format_clock(
         local.wHour as u32,
@@ -109,7 +119,8 @@ fn main() {
     // Test overlay CLI mode
     if args.iter().any(|a| a == "--test-overlay") {
         println!("Flashing test overlay with slide animation...");
-        let mut overlay = OverlayWindow::new(&config.position, 4).expect("Failed to create overlay");
+        let mut overlay =
+            OverlayWindow::new(&config.position, 4).expect("Failed to create overlay");
         overlay.trigger("10:45", "PM", "01H 30M");
         let start = std::time::Instant::now();
         while start.elapsed() < Duration::from_secs(5) {
@@ -145,11 +156,18 @@ fn main() {
 
     println!("Starting Time Reminder daemon...");
 
+    // SAFETY: Initializes the Win32 message-only daemon window, desktop attachment,
+    // global hotkey, system tray icon, and tick timer.
     unsafe {
         // Ensure process and thread are attached to interactive Window Station & Desktop
         if let Ok(winsta) = OpenWindowStationW(w!("WinSta0"), false, GENERIC_ALL.0) {
             let _ = SetProcessWindowStation(winsta);
-            if let Ok(desktop) = OpenDesktopW(w!("Default"), DESKTOP_CONTROL_FLAGS(0), false, GENERIC_ALL.0) {
+            if let Ok(desktop) = OpenDesktopW(
+                w!("Default"),
+                DESKTOP_CONTROL_FLAGS(0),
+                false,
+                GENERIC_ALL.0,
+            ) {
                 let _ = SetThreadDesktop(desktop);
             }
         }
@@ -200,7 +218,8 @@ fn main() {
             1,
             windows::Win32::UI::Input::KeyboardAndMouse::HOT_KEY_MODIFIERS(mod_flags),
             vk,
-        ).is_ok();
+        )
+        .is_ok();
         if hotkey_registered {
             println!("Global hotkey {} registered.", config.hotkey);
         }
@@ -230,6 +249,8 @@ fn main() {
 
         // Flash once on startup to show the player it's working!
         trigger_time_reminder(&mut overlay, &tracker, &config);
+        // Trim working set memory after initialization
+        time_reminder::trim_working_set();
 
         let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
@@ -243,11 +264,14 @@ fn main() {
                 let interval_secs = (config.interval_minutes as u64) * 60;
 
                 // Check interval trigger (only when playing and interval reached)
-                if playing && interval_secs > 0 && elapsed_secs > 0 && elapsed_secs % interval_secs == 0 {
-                    if elapsed_secs != last_reminder_sec {
-                        last_reminder_sec = elapsed_secs;
-                        trigger_time_reminder(&mut overlay, &tracker, &config);
-                    }
+                if playing
+                    && interval_secs > 0
+                    && elapsed_secs > 0
+                    && elapsed_secs.is_multiple_of(interval_secs)
+                    && elapsed_secs != last_reminder_sec
+                {
+                    last_reminder_sec = elapsed_secs;
+                    trigger_time_reminder(&mut overlay, &tracker, &config);
                 }
 
                 overlay.update();
@@ -264,13 +288,25 @@ fn main() {
 
                 // Drain redundant trigger events queued in the same click action
                 let mut discard_msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
-                while PeekMessageW(&mut discard_msg, hwnd, WM_APP_TRAY_TRIGGER, WM_APP_TRAY_TRIGGER, PM_REMOVE).as_bool() {}
-                while PeekMessageW(&mut discard_msg, hwnd, WM_TRAYICON, WM_TRAYICON, PM_REMOVE).as_bool() {}
+                while PeekMessageW(
+                    &mut discard_msg,
+                    hwnd,
+                    WM_APP_TRAY_TRIGGER,
+                    WM_APP_TRAY_TRIGGER,
+                    PM_REMOVE,
+                )
+                .as_bool()
+                {}
+                while PeekMessageW(&mut discard_msg, hwnd, WM_TRAYICON, WM_TRAYICON, PM_REMOVE)
+                    .as_bool()
+                {}
 
                 // If closed within 350ms, this click was the dismiss click on the tray icon itself
                 if let Some(t) = last_flyout_closed {
                     if t.elapsed() < Duration::from_millis(350) {
-                        log_debug("Ignoring tray click immediately after flyout close (toggle dismiss)");
+                        log_debug(
+                            "Ignoring tray click immediately after flyout close (toggle dismiss)",
+                        );
                         continue;
                     }
                 }
@@ -289,19 +325,21 @@ fn main() {
                         // If hotkey changed, update registration
                         if config.hotkey != old_hotkey {
                             let _ = UnregisterHotKey(hwnd, 1);
-                            let (mod_flags, vk) = time_reminder::config::parse_hotkey(&config.hotkey);
+                            let (mod_flags, vk) =
+                                time_reminder::config::parse_hotkey(&config.hotkey);
                             let _ = RegisterHotKey(
                                 hwnd,
                                 1,
-                                windows::Win32::UI::Input::KeyboardAndMouse::HOT_KEY_MODIFIERS(mod_flags),
+                                windows::Win32::UI::Input::KeyboardAndMouse::HOT_KEY_MODIFIERS(
+                                    mod_flags,
+                                ),
                                 vk,
                             );
                         }
 
-                        if let Ok(new_overlay) = OverlayWindow::new(
-                            &config.position,
-                            config.display_duration_secs,
-                        ) {
+                        if let Ok(new_overlay) =
+                            OverlayWindow::new(&config.position, config.display_duration_secs)
+                        {
                             overlay = new_overlay;
                         }
                         log_debug("Settings saved. Triggering preview notification.");
@@ -310,10 +348,9 @@ fn main() {
                     SettingsAction::TestNotif(new_cfg) => {
                         config = new_cfg;
                         let _ = save_config(&config_path, &config);
-                        if let Ok(new_overlay) = OverlayWindow::new(
-                            &config.position,
-                            config.display_duration_secs,
-                        ) {
+                        if let Ok(new_overlay) =
+                            OverlayWindow::new(&config.position, config.display_duration_secs)
+                        {
                             overlay = new_overlay;
                         }
                         log_debug("Test OSD triggered from Settings GUI.");
@@ -343,4 +380,3 @@ fn main() {
 
     println!("Time Reminder daemon stopped cleanly.");
 }
-

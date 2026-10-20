@@ -35,15 +35,11 @@ impl Default for Config {
 }
 
 pub fn set_run_on_startup(enable: bool) -> Result<(), String> {
+    // SAFETY: Modifies the HKCU Run registry key for the current user. Does not require UAC elevation.
+    // Handles are closed with RegCloseKey in all execution branches.
     unsafe {
         let mut hkey = HKEY::default();
-        let res = RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            RUN_KEY_SUBKEY,
-            0,
-            KEY_WRITE,
-            &mut hkey,
-        );
+        let res = RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY_SUBKEY, 0, KEY_WRITE, &mut hkey);
         if res.is_err() {
             return Err("Failed to open HKCU Run registry key for writing".to_string());
         }
@@ -51,18 +47,14 @@ pub fn set_run_on_startup(enable: bool) -> Result<(), String> {
         if enable {
             let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
             let formatted_path = format!("\"{}\"", exe_path.display());
-            let wide_val: Vec<u16> = formatted_path.encode_utf16().chain(std::iter::once(0)).collect();
-            let slice = std::slice::from_raw_parts(
-                wide_val.as_ptr() as *const u8,
-                wide_val.len() * 2,
-            );
-            let set_res = RegSetValueExW(
-                hkey,
-                APP_REG_NAME,
-                0,
-                REG_SZ,
-                Some(slice),
-            );
+            let wide_val: Vec<u16> = formatted_path
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            // SAFETY: wide_val is a valid null-terminated UTF-16 vector with length wide_val.len() * 2 bytes.
+            let slice =
+                std::slice::from_raw_parts(wide_val.as_ptr() as *const u8, wide_val.len() * 2);
+            let set_res = RegSetValueExW(hkey, APP_REG_NAME, 0, REG_SZ, Some(slice));
             let _ = RegCloseKey(hkey);
             if set_res.is_err() {
                 return Err("Failed to write to Run registry key".to_string());
@@ -76,17 +68,10 @@ pub fn set_run_on_startup(enable: bool) -> Result<(), String> {
 }
 
 pub fn check_run_on_startup() -> bool {
+    // SAFETY: Reads value from HKCU Run key. Key handle is closed before returning.
     unsafe {
         let mut hkey = HKEY::default();
-        if RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            RUN_KEY_SUBKEY,
-            0,
-            KEY_READ,
-            &mut hkey,
-        )
-        .is_err()
-        {
+        if RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY_SUBKEY, 0, KEY_READ, &mut hkey).is_err() {
             return false;
         }
 
@@ -140,8 +125,9 @@ pub fn parse_hotkey(hotkey: &str) -> (u32, u32) {
         } else if part.eq_ignore_ascii_case("win") {
             modifiers |= 0x0008; // MOD_WIN
         } else if part.len() == 1 {
-            let c = part.chars().next().unwrap().to_ascii_uppercase();
-            vk = c as u32;
+            if let Some(c) = part.chars().next() {
+                vk = c.to_ascii_uppercase() as u32;
+            }
         }
     }
     if modifiers == 0 {
@@ -149,4 +135,3 @@ pub fn parse_hotkey(hotkey: &str) -> (u32, u32) {
     }
     (modifiers, vk)
 }
-
