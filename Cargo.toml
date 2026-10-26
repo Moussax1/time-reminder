@@ -5,6 +5,8 @@ edition = "2021"
 description = "Ultra-lightweight Windows native in-game time reminder with 8-bit retro split pod card"
 license = "MIT"
 readme = "README.md"
+authors = ["Yassine Ben Moussa <yassinebenmoussa@proton.me>"]
+repository = "https://github.com/Moussax1/time-reminder"
 
 [lib]
 name = "time_reminder"

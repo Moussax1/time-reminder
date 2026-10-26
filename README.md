@@ -104,7 +104,7 @@ Settings are saved in `config.json` next to `time-reminder.exe`. You can edit th
 
 ```cmd
 # Clone the repository
-git clone https://github.com/<owner>/time-reminder.git
+git clone https://github.com/Moussax1/time-reminder.git
 cd time-reminder
 
 # Run the test suite (32 unit and integration tests)
