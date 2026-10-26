@@ -3,5 +3,6 @@
   "display_duration_secs": 4,
   "position": "top-right",
   "time_format": "12h",
-  "theme": "monochrome"
+  "theme": "monochrome",
+  "run_on_startup": false
 }

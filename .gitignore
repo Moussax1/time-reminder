@@ -1,4 +1,22 @@
+# Build outputs
 /target
 /dist
-.superpowers
+
+# Runtime user configuration
+config.json
+
+# Graphify knowledge graph & agent configurations
+graphify-out/
+.agents/
+.superpowers/
+
+# Logs and temporary files
 *.log
+*.tmp
+
+# Editor & OS files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
