@@ -1,80 +1,139 @@
-# 🕹️ Game Time Reminder (Windows Native)
+<p align="center">
+  <img src="branding/time-reminder-horizontal.svg" alt="Time Reminder Logo" width="480">
+</p>
 
-An ultra-lightweight, zero-distraction in-game time reminder tool built in pure Rust with direct Win32 API integration. Periodically displays a crisp, retro 8-bit Split Pod Card showing the current digital time and active session playtime so you never lose track of time while gaming.
+<p align="center">
+  <strong>Native Windows HUD timer and session tracker for PC gamers.</strong><br>
+  Built in pure Rust. Zero hooks, zero DLL injection, 367 KB standalone binary.
+</p>
 
-![Split Pod Card](docs/specs/assets/split-pod-card.png)
+<p align="center">
+  <a href="#overview">Overview</a> &bull;
+  <a href="#features">Features</a> &bull;
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#controls">Controls</a> &bull;
+  <a href="#cli-options">CLI Options</a> &bull;
+  <a href="#configuration">Configuration</a> &bull;
+  <a href="#how-it-works">How It Works</a> &bull;
+  <a href="#building-from-source">Build</a>
+</p>
 
 ---
 
-## ⚡ Highlights
+## Overview
 
-- **Authentic 8-Bit Retro Aesthetic**: Uses custom embedded 8-bit arcade bitmap glyphs rendered on a curved **Split Pod Card** with pure monochrome black & white contrast.
-- **Ultra-Lightweight & Zero-Lag**:
-  - Memory footprint: **< 3 MB RAM**.
-  - CPU usage: **0.0% idle**.
-  - Binary size: **~1.49 MB** standalone `.exe` (zero runtimes, zero DLL dependencies).
-- **Anti-Cheat Safe & Transparent**: Uses `WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_LAYERED`. Clicks pass directly through into your game without stealing window focus or interrupting input.
-- **Smart Game Detection**: Uses Win32 `SHQueryUserNotificationState` (Direct3D fullscreen state) + foreground bounds check. Only counts active playtime when your game is actually in the foreground.
-- **Dual Configuration UX**:
-  1. **System Tray Menu**: Right-click the clock icon in the Windows taskbar tray to switch reminder intervals (15m, 30m, 45m, 60m) in 1 click, trigger a test notification, or reset session time.
-  2. **Retro 8-Bit Settings GUI**: Visual modal window to toggle interval, position, and 12h/24h format with interactive retro buttons.
+Time Reminder is a background Windows application that briefly flashes a retro 8-bit Split Pod Card over your screen at set intervals. It displays the current digital clock alongside your active gaming session time, helping you keep track of time during immersive full-screen gaming sessions without breaking focus.
 
----
+<p align="center">
+  <img src="docs/specs/assets/split-pod-card.png" alt="Split Pod Card Overlay" width="520">
+</p>
 
-## 🚀 Quick Start
+## Features
 
-### 1. Launching the App
-Simply double-click `TimeReminder.bat` or run:
+- **Safe for Anti-Cheat**: Zero process memory modification, zero DirectX/Vulkan/OpenGL hooking, and no DLL injection. Time Reminder renders through the standard Windows desktop window manager as a click-through layered window.
+- **Minimal Resource Footprint**:
+  - Binary size: **367 KB** standalone executable (no external runtimes, no extra DLLs).
+  - Memory: **< 3 MB RAM** working set.
+  - CPU: **0.0%** at idle.
+- **Smart Game Detection**: Uses Win32 user notification state (`SHQueryUserNotificationState`) and foreground window bounds to detect full-screen games. Session playtime pauses automatically when you Alt-Tab or close the game.
+- **Click-Through HUD**: Rendered with `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST`. Mouse clicks pass through directly to your game without interrupting input or stealing focus.
+- **Custom 8-Bit Software Renderer**: Handcrafted arcade bitmap font rendered into a 32bpp BGRA buffer with antialiased rounded pill corners and slide-in animations.
+- **Interactive Retro Settings GUI**: Toggle reminder intervals (15m, 30m, 45m, 60m), clock format (12h/24h), screen position, and startup boot behavior from the tray menu or the retro settings window.
+
+<p align="center">
+  <img src="docs/specs/assets/retro-settings-window.png" alt="Retro Settings GUI" width="480">
+</p>
+
+## Quick Start
+
+### Download and Run
+
+1. Grab the latest release archive (`time-reminder-v0.1.0-windows-x64.zip`) from the Releases page or [`dist/`](dist/).
+2. Extract the folder anywhere on your computer.
+3. Double-click `TimeReminder.bat` or run `time-reminder.exe`.
+
+When launched, the reminder card flashes once in the top-right corner to confirm it is active, then sits quietly in your system tray.
+
+### Controls
+
+| Action | How to Trigger |
+|---|---|
+| **Manual Flash** | Press `Alt + T` anytime (including during full-screen games) |
+| **System Tray Menu** | Right-click the hourglass icon in the Windows taskbar tray |
+| **Open Settings GUI** | Click **Settings...** in the tray menu, or run `time-reminder.exe --settings` |
+| **Reset Session** | Click **Reset Session Time** in the tray menu |
+| **Test Notification** | Click **Test Notification** in the tray menu, or run `time-reminder.exe --test-overlay` |
+| **Quit** | Click **Exit** in the tray menu |
+
+## CLI Options
+
 ```cmd
-target\release\time-reminder.exe
+# Run daemon normally
+time-reminder.exe
+
+# Flash test overlay for 4 seconds and exit
+time-reminder.exe --test-overlay
+
+# Open retro settings dialog directly
+time-reminder.exe --settings
 ```
-When started, the daemon flashes the reminder card once in the top-right corner to confirm it is active, then sits silently in the system tray.
 
-### 2. Hotkeys & Controls
-- **`Alt + T`**: Instantly flashes the reminder card on-screen anytime (even during a game).
-- **Right-Click System Tray Icon**:
-  - `[✓] 30m` (Interval selection)
-  - `Settings...` (Opens the retro 8-bit GUI)
-  - `Test Notification` (Flashes the card)
-  - `Reset Session Time` (Zeroes out the session counter)
-  - `Exit` (Quits cleanly)
+## Configuration
 
-### 3. CLI Helper Commands
-- `target\release\time-reminder.exe --test-overlay`: Flashes the overlay for 4 seconds and exits.
-- `target\release\time-reminder.exe --settings`: Opens the retro settings dialog directly.
+Settings are saved in `config.json` next to `time-reminder.exe`. You can edit this file directly or use the Settings GUI:
 
----
-
-## ⚙️ Configuration (`config.json`)
-
-Settings are saved in `config.json` next to the executable:
 ```json
 {
   "interval_minutes": 30,
   "display_duration_secs": 4,
   "position": "top-right",
   "time_format": "12h",
-  "theme": "monochrome"
+  "theme": "monochrome",
+  "run_on_startup": false
 }
 ```
 
-| Key | Values | Description |
-|---|---|---|
-| `interval_minutes` | `15`, `30`, `45`, `60` | Playtime duration between reminders |
-| `display_duration_secs` | Integer (e.g. `4`) | Number of seconds overlay stays visible |
-| `position` | `"top-right"`, `"top-center"`, `"top-left"` | Screen anchor location |
-| `time_format` | `"12h"`, `"24h"` | 12-hour (with AM/PM) or 24-hour clock |
-| `theme` | `"monochrome"` | Pure black & white high-contrast card |
+| Field | Options | Default | Description |
+|---|---|---|---|
+| `interval_minutes` | `15`, `30`, `45`, `60` | `30` | Active gaming time between reminder alerts. |
+| `display_duration_secs` | Integer (e.g. `4`) | `4` | How long the reminder card stays visible on screen. |
+| `position` | `"top-right"`, `"top-center"`, `"top-left"` | `"top-right"` | Screen anchor location for the overlay. |
+| `time_format` | `"12h"`, `"24h"` | `"12h"` | Clock display format (12-hour with AM/PM or 24-hour). |
+| `theme` | `"monochrome"` | `"monochrome"` | Card aesthetic (pure high-contrast black and white). |
+| `run_on_startup` | `true`, `false` | `false` | Automatically launch Time Reminder when Windows boots. |
 
----
+## How It Works
 
-## 🛠️ Building from Source
+1. **Detection Loop**: Every second, the tracker inspects the system display state via `SHQueryUserNotificationState`. If a full-screen Direct3D or desktop application is in focus, the session timer ticks forward. If the system is idle or you Alt-Tab to a desktop browser, the timer pauses.
+2. **Overlay Presentation**: When the target interval elapses, Time Reminder calculates the bounding box on the target display monitor and positions a layered window (`WS_EX_LAYERED`). The window alpha transitions smoothly via cubic easing equations (`ease_out_cubic` on entry, `ease_in_cubic` on exit).
+3. **Software Pixel Pipeline**: Software buffers are written directly into a pre-multiplied 32bpp DIB section (`PixelBuffer`), drawn via `UpdateLayeredWindow`, and handed off to Desktop Window Manager (DWM) for compositing.
 
-Requirements:
-- Rust toolchain (e.g., `stable-x86_64-pc-windows-gnu` or `stable-x86_64-pc-windows-msvc`)
+## Building from Source
+
+### Prerequisites
+
+- [Rust toolchain](https://www.rust-lang.org/tools/install) (Rust 1.70+ or 2021 edition)
+- Windows 10 or 11 (x86_64)
+
+### Build Commands
 
 ```cmd
+# Clone the repository
+git clone https://github.com/<owner>/time-reminder.git
+cd time-reminder
+
+# Run the test suite (32 unit and integration tests)
 cargo test
+
+# Compile optimized release binary
 cargo build --release
 ```
-The compiled standalone binary is placed in `target/release/time-reminder.exe`.
+
+The compiled standalone executable is generated at:
+```
+target\release\time-reminder.exe
+```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
