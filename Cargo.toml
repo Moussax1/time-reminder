@@ -2,6 +2,9 @@
 name = "time-reminder"
 version = "0.1.0"
 edition = "2021"
+description = "Ultra-lightweight Windows native in-game time reminder with 8-bit retro split pod card"
+license = "MIT"
+readme = "README.md"
 
 [lib]
 name = "time_reminder"
