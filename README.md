@@ -1,22 +1,11 @@
-<p align="center">
-  <img src="branding/time-reminder-horizontal.svg" alt="Time Reminder Logo" width="480">
-</p>
+# Time Reminder
 
-<p align="center">
-  <strong>Native Windows HUD timer and session tracker for PC gamers.</strong><br>
-  Built in pure Rust. Zero hooks, zero DLL injection, 367 KB standalone binary.
-</p>
+![Time Reminder](branding/dist/horizontal/time-reminder-horizontal-mono-00ff9d-1200.png)
 
-<p align="center">
-  <a href="#overview">Overview</a> &bull;
-  <a href="#features">Features</a> &bull;
-  <a href="#quick-start">Quick Start</a> &bull;
-  <a href="#controls">Controls</a> &bull;
-  <a href="#cli-options">CLI Options</a> &bull;
-  <a href="#configuration">Configuration</a> &bull;
-  <a href="#how-it-works">How It Works</a> &bull;
-  <a href="#building-from-source">Build</a>
-</p>
+**Native Windows HUD timer and session tracker for PC gamers.**
+Built in pure Rust. Zero hooks, zero DLL injection, 367 KB standalone binary.
+
+[Overview](#overview) &bull; [Features](#features) &bull; [Quick Start](#quick-start) &bull; [Controls](#controls) &bull; [CLI Options](#cli-options) &bull; [Configuration](#configuration) &bull; [How It Works](#how-it-works) &bull; [Building from Source](#building-from-source)
 
 ---
 
@@ -24,9 +13,7 @@
 
 Time Reminder is a background Windows application that briefly flashes a retro 8-bit Split Pod Card over your screen at set intervals. It displays the current digital clock alongside your active gaming session time, helping you keep track of time during immersive full-screen gaming sessions without breaking focus.
 
-<p align="center">
-  <img src="docs/specs/assets/split-pod-card.png" alt="Split Pod Card Overlay" width="520">
-</p>
+![Split Pod Card Overlay](docs/specs/assets/split-pod-card.png)
 
 ## Features
 
@@ -40,9 +27,7 @@ Time Reminder is a background Windows application that briefly flashes a retro 8
 - **Custom 8-Bit Software Renderer**: Handcrafted arcade bitmap font rendered into a 32bpp BGRA buffer with antialiased rounded pill corners and slide-in animations.
 - **Interactive Retro Settings GUI**: Toggle reminder intervals (15m, 30m, 45m, 60m), clock format (12h/24h), screen position, and startup boot behavior from the tray menu or the retro settings window.
 
-<p align="center">
-  <img src="docs/specs/assets/retro-settings-window.png" alt="Retro Settings GUI" width="480">
-</p>
+![Retro Settings GUI](docs/specs/assets/retro-settings-window.png)
 
 ## Quick Start
 
