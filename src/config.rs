@@ -27,7 +27,7 @@ impl Default for Config {
             interval_minutes: 30,
             display_duration_secs: 4,
             time_format: "12h".to_string(),
-            position: "top-right".to_string(),
+            position: "top-center".to_string(),
             hotkey: "Alt+T".to_string(),
             run_on_startup: false,
         }

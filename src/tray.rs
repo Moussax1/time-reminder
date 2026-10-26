@@ -1,6 +1,7 @@
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
+use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION,
     NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
@@ -24,26 +25,72 @@ pub const CMD_RESET_SESSION: u32 = 2003;
 pub const CMD_EXIT: u32 = 9999;
 
 pub fn log_debug(msg: &str) {
-    use std::io::Write;
-    // SAFETY: GetLocalTime safely queries current local system time into SYSTEMTIME struct.
-    let lt = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    let line = format!(
-        "[{:02}:{:02}:{:02}.{:03}] {}",
-        lt.wHour, lt.wMinute, lt.wSecond, lt.wMilliseconds, msg
-    );
-    println!("{}", line);
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let log_path = parent.join("tray_debug.log");
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)
-            {
-                let _ = writeln!(f, "{}", line);
+    #[cfg(debug_assertions)]
+    {
+        use std::io::Write;
+        // SAFETY: GetLocalTime safely queries current local system time into SYSTEMTIME struct.
+        let lt = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+        let line = format!(
+            "[{:02}:{:02}:{:02}.{:03}] {}",
+            lt.wHour, lt.wMinute, lt.wSecond, lt.wMilliseconds, msg
+        );
+        println!("{}", line);
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                let log_path = parent.join("tray_debug.log");
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_path)
+                {
+                    let _ = writeln!(f, "{}", line);
+                }
             }
         }
     }
+    #[cfg(not(debug_assertions))]
+    let _ = msg;
+}
+
+static INIT_DARK_MENU: std::sync::Once = std::sync::Once::new();
+
+pub fn enable_dark_mode_menu() {
+    INIT_DARK_MENU.call_once(|| {
+        // SAFETY: Dynamically queries uxtheme.dll once to request dark mode menus on Windows 10/11
+        // using undocumented ordinal 135 (SetPreferredAppMode) or ordinal 133 (AllowDarkModeForApp).
+        // Fails silently on older OS versions without error.
+        unsafe {
+            if let Ok(uxtheme) = LoadLibraryW(w!("uxtheme.dll")) {
+                // Ordinal 135: SetPreferredAppMode(2 = ForceDark) for Windows 10 1903+ and Windows 11
+                let set_preferred_app_mode: Option<unsafe extern "system" fn(i32) -> i32> =
+                    std::mem::transmute(GetProcAddress(
+                        uxtheme,
+                        windows::core::PCSTR(135_usize as *const u8),
+                    ));
+                if let Some(func) = set_preferred_app_mode {
+                    let _ = func(2); // 2 = ForceDark
+                } else {
+                    // Ordinal 133: AllowDarkModeForApp(true) for Windows 10 1809
+                    let allow_dark_mode_for_app: Option<unsafe extern "system" fn(bool) -> bool> =
+                        std::mem::transmute(GetProcAddress(
+                            uxtheme,
+                            windows::core::PCSTR(133_usize as *const u8),
+                        ));
+                    if let Some(func) = allow_dark_mode_for_app {
+                        let _ = func(true);
+                    }
+                }
+
+                // Ordinal 136: FlushMenuThemes() triggers Windows to refresh menu themes
+                let flush_menu_themes: Option<unsafe extern "system" fn()> = std::mem::transmute(
+                    GetProcAddress(uxtheme, windows::core::PCSTR(136_usize as *const u8)),
+                );
+                if let Some(func) = flush_menu_themes {
+                    func();
+                }
+            }
+        }
+    });
 }
 
 pub struct TrayIcon {
@@ -53,7 +100,8 @@ pub struct TrayIcon {
 
 impl TrayIcon {
     pub fn new(hwnd: HWND) -> windows::core::Result<Self> {
-        let hicon = create_clock_icon();
+        enable_dark_mode_menu();
+        let hicon = load_or_create_tray_icon();
 
         let mut nid = NOTIFYICONDATAW {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
@@ -115,6 +163,7 @@ impl TrayIcon {
     }
 
     pub fn show_menu(&self, hwnd: HWND, active_interval: u32) -> u32 {
+        enable_dark_mode_menu();
         // SAFETY: Creates popup context menu, attaches items, displays it at current mouse coordinates,
         // and destroys the menu upon return to prevent handle leakage.
         unsafe {
@@ -214,55 +263,82 @@ impl Drop for TrayIcon {
     }
 }
 
-// Generates a clean 16x16 high-contrast clock icon programmatically
-pub fn create_clock_icon() -> HICON {
-    // SAFETY: Allocates 16x16 mask and 32bpp color bitmaps in memory, synthesizes an HICON
+/// Loads the embedded 16x16 icon from the executable resource (resource ID 1) if available,
+/// or falls back to synthesizing the Concept T2 hourglass icon programmatically.
+pub fn load_or_create_tray_icon() -> HICON {
+    // SAFETY: Retrieves current process module handle and loads 16x16 icon resource ID 1.
+    // The cast of integer 1 to a pointer matches Win32 MAKEINTRESOURCEW convention.
+    #[allow(clippy::manual_dangling_ptr)]
+    unsafe {
+        if let Ok(hinstance) = windows::Win32::System::LibraryLoader::GetModuleHandleW(None) {
+            if let Ok(hicon) = windows::Win32::UI::WindowsAndMessaging::LoadImageW(
+                hinstance,
+                windows::core::PCWSTR(1 as *const u16),
+                windows::Win32::UI::WindowsAndMessaging::IMAGE_ICON,
+                16,
+                16,
+                windows::Win32::UI::WindowsAndMessaging::LR_DEFAULTCOLOR,
+            ) {
+                if !hicon.is_invalid() {
+                    return HICON(hicon.0);
+                }
+            }
+        }
+    }
+
+    create_hourglass_icon()
+}
+
+/// Synthesizes the authentic 16x16 Concept T2 hourglass icon in memory.
+/// Frame contour: Cyber Mint (#00FF9D)
+/// Active countdown spark: Crisp White (#FFFFFF)
+pub fn create_hourglass_icon() -> HICON {
+    // SAFETY: Allocates 16x16 1bpp mask and 32bpp color bitmaps in memory, synthesizes an HICON
     // via CreateIconIndirect, and immediately deletes temporary bitmaps so only the HICON persists.
     unsafe {
-        // 16x16 1bpp AND mask: 2 bytes per row, 16 rows = 32 bytes
-        // Bit 0 = OPAQUE (color shows), Bit 1 = TRANSPARENT
-        let mut mask = [0xFFu8; 32]; // Default all transparent (1)
+        // 16x16 1bpp AND mask (2 bytes per row, 16 rows = 32 bytes).
+        // Bit 0 = OPAQUE (color shows), Bit 1 = TRANSPARENT.
+        // Matches the T2 (Curved Glass Bulb) contour with central spark:
+        let mask: [u8; 32] = [
+            0xFF, 0xFF, // row 0: transparent
+            0xFF, 0xFF, // row 1: transparent
+            0xE0, 0x07, // row 2: top bulb bar
+            0xE0, 0x07, // row 3: top bulb bar
+            0xF8, 0x1F, // row 4: upper chamber
+            0xF9, 0x9F, // row 5: upper chamber walls
+            0xFD, 0xBF, // row 6: neck taper
+            0xFE, 0x7F, // row 7: waist & center spark
+            0xFE, 0x7F, // row 8: waist & center spark
+            0xFD, 0xBF, // row 9: neck taper
+            0xF9, 0x9F, // row 10: lower chamber walls
+            0xF8, 0x1F, // row 11: lower chamber
+            0xE0, 0x07, // row 12: bottom base bar
+            0xE0, 0x07, // row 13: bottom base bar
+            0xFF, 0xFF, // row 14: transparent
+            0xFF, 0xFF, // row 15: transparent
+        ];
+
         let mut color = [0x00u8; 16 * 16 * 4]; // 32-bit BGRA
 
-        // Draw 15px circular clock face centered at (7, 7)
         for y in 0..16 {
+            let row_mask = ((mask[y * 2] as u16) << 8) | (mask[y * 2 + 1] as u16);
             for x in 0..16 {
-                let dx = x as i32 - 7;
-                let dy = y as i32 - 7;
-                let dist_sq = dx * dx + dy * dy;
-
-                let pixel_idx = (y * 16 + x) * 4;
-                let mask_byte = y * 2 + (x / 8);
-                let mask_bit = 7 - (x % 8);
-
-                if dist_sq <= 49 {
-                    // Inside or on the circle: mark pixel as OPAQUE (bit = 0)
-                    mask[mask_byte] &= !(1 << mask_bit);
-
-                    if dist_sq >= 36 {
-                        // Outer rim: solid black border (RGB 0, 0, 0) for light mode contrast
-                        color[pixel_idx] = 0; // B
-                        color[pixel_idx + 1] = 0; // G
-                        color[pixel_idx + 2] = 0; // R
-                        color[pixel_idx + 3] = 255; // A
+                let bit = 15 - x;
+                let is_opaque = (row_mask & (1 << bit)) == 0;
+                if is_opaque {
+                    let pixel_idx = (y * 16 + x) * 4;
+                    if (x == 7 || x == 8) && (y == 7 || y == 8) {
+                        // Crisp white center time grain
+                        color[pixel_idx] = 255;
+                        color[pixel_idx + 1] = 255;
+                        color[pixel_idx + 2] = 255;
+                        color[pixel_idx + 3] = 255;
                     } else {
-                        // Inner dial: bright white (RGB 255, 255, 255) for dark mode contrast
-                        // Clock hands: pointing up at 12 and right at 3
-                        let is_hand =
-                            (x == 7 && (3..=7).contains(&y)) || (y == 7 && (7..=11).contains(&x));
-                        if is_hand {
-                            // Dark black clock hands
-                            color[pixel_idx] = 0;
-                            color[pixel_idx + 1] = 0;
-                            color[pixel_idx + 2] = 0;
-                            color[pixel_idx + 3] = 255;
-                        } else {
-                            // Bright white face
-                            color[pixel_idx] = 255;
-                            color[pixel_idx + 1] = 255;
-                            color[pixel_idx + 2] = 255;
-                            color[pixel_idx + 3] = 255;
-                        }
+                        // Cyber Mint glass contour (#00FF9D -> B: 157, G: 255, R: 0, A: 255)
+                        color[pixel_idx] = 157;
+                        color[pixel_idx + 1] = 255;
+                        color[pixel_idx + 2] = 0;
+                        color[pixel_idx + 3] = 255;
                     }
                 }
             }
@@ -284,4 +360,10 @@ pub fn create_clock_icon() -> HICON {
         let _ = DeleteObject(hbm_color);
         icon
     }
+}
+
+/// Backwards compatibility alias for create_hourglass_icon.
+#[inline]
+pub fn create_clock_icon() -> HICON {
+    create_hourglass_icon()
 }

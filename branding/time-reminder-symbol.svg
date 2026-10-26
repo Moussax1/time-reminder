@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="symbol-title">
+  <title id="symbol-title">Time Reminder - Master Symbol</title>
+  <path fill="#000000" fill-rule="evenodd" d="
+    M 68 32
+    H 188
+    A 12 12 0 0 1 200 44
+    V 52
+    A 12 12 0 0 1 188 64
+    H 176
+    C 176 96 148 116 140 128
+    C 148 140 176 160 176 192
+    H 188
+    A 12 12 0 0 1 200 204
+    V 212
+    A 12 12 0 0 1 188 224
+    H 68
+    A 12 12 0 0 1 56 212
+    V 204
+    A 12 12 0 0 1 68 192
+    H 80
+    C 80 160 108 140 116 128
+    C 108 116 80 96 80 64
+    H 68
+    A 12 12 0 0 1 56 52
+    V 44
+    A 12 12 0 0 1 68 32
+    Z
+    M 96 74
+    H 160
+    C 160 92 142 108 134 118
+    H 122
+    C 114 108 96 92 96 74
+    Z
+    M 124 124
+    H 132
+    V 132
+    H 124
+    Z
+    M 122 138
+    H 134
+    C 142 148 160 164 160 182
+    H 96
+    C 96 164 114 148 122 138
+    Z
+  "/>
+</svg>

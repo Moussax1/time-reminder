@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>Time Reminder Symbol</title><g transform="translate(-29.31 -29.31) scale(1.229)">
+  <title id="small-symbol-title">Time Reminder - Small-Size Symbol (16px cut)</title>
+  <path fill="#000000" fill-rule="evenodd" d="
+    M 64 28
+    H 192
+    A 14 14 0 0 1 206 42
+    V 54
+    A 14 14 0 0 1 192 68
+    H 178
+    C 178 98 152 116 144 128
+    C 152 140 178 158 178 188
+    H 192
+    A 14 14 0 0 1 206 202
+    V 214
+    A 14 14 0 0 1 192 228
+    H 64
+    A 14 14 0 0 1 50 214
+    V 202
+    A 14 14 0 0 1 64 188
+    H 78
+    C 78 158 104 140 112 128
+    C 104 116 78 98 78 68
+    H 64
+    A 14 14 0 0 1 50 54
+    V 42
+    A 14 14 0 0 1 64 28
+    Z
+    M 94 76
+    H 162
+    C 162 94 144 108 136 116
+    H 120
+    C 112 108 94 94 94 76
+    Z
+    M 120 120
+    H 136
+    V 136
+    H 120
+    Z
+    M 120 140
+    H 136
+    C 144 148 162 162 162 180
+    H 94
+    C 94 162 112 148 120 140
+    Z
+  "/>
+</g></svg>

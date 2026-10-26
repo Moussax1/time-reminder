@@ -173,6 +173,27 @@ impl PixelBuffer {
             cur_x += 8 * scale + scale; // character width + spacing
         }
     }
+
+    // Draws 8-bit text with +3px vertical elongation for enhanced legibility
+    pub fn draw_text_tall(&mut self, text: &str, start_x: i32, start_y: i32, color: u32) {
+        let mut cur_x = start_x;
+        // Map 7-row glyph into 10 active rows (+3px height).
+        // Rows 1, 3, 5 are duplicated to keep vertical stems, crossbars, and loops symmetrical.
+        const ROW_MAP: [usize; 10] = [0, 1, 1, 2, 3, 3, 4, 5, 5, 6];
+
+        for ch in text.chars() {
+            let glyph = get_glyph(ch.to_ascii_uppercase());
+            for (dest_y, &src_row) in ROW_MAP.iter().enumerate() {
+                let row = glyph[src_row];
+                for col_idx in 0..8 {
+                    if (row & (0x80 >> col_idx)) != 0 {
+                        self.set_pixel(cur_x + col_idx, start_y + dest_y as i32, color);
+                    }
+                }
+            }
+            cur_x += 9; // 8px glyph width + 1px character spacing
+        }
+    }
 }
 
 // Renders the exact Split Pod Card
@@ -188,11 +209,12 @@ pub fn render_split_pod_card(
 
     // Colors
     let color_outer_bg = 0xFF000000; // Pure Black
-    let color_outer_border = 0xFFFFFFFF; // Crisp White
+    let color_outer_border = 0xFF00FF9D; // Cyber Mint brand accent outline
     let color_inner_bg = 0xFF141414; // Deep Charcoal
-    let color_inner_border = 0xFF555555; // Muted White border
-    let color_text_white = 0xFFFFFFFF;
+    let color_inner_border = 0xFF1F4A38; // Subtle Cyber Mint border
+    let color_text_white = 0xFFFFFFFF; // Crisp White
     let color_text_muted = 0xFF888888;
+    let color_accent = 0xFF00FF9D; // Cyber Mint brand accent
 
     // 1. Outer Card: width=266, height=62, r=16, border=2
     buf.draw_rounded_rect(2, 2, 266, 62, 16, color_outer_bg, color_outer_border, 2);
@@ -234,7 +256,7 @@ pub fn render_split_pod_card(
 
     // Blinking Cursor ► (scale 2)
     if show_cursor {
-        buf.draw_text("►", cursor_x, 25, 2, color_text_white);
+        buf.draw_text("►", cursor_x, 25, 2, color_accent);
     }
 
     // Time text (e.g. 06:45) - scale 2 (16px height)
@@ -253,11 +275,11 @@ pub fn render_split_pod_card(
     let session_title = "SESSION";
     let title_w = session_title.len() as i32 * 9 - 1;
     let title_x = right_center - title_w / 2;
-    buf.draw_text(session_title, title_x, 20, 1, color_text_muted);
+    buf.draw_text(session_title, title_x, 18, 1, color_text_muted);
 
     let val_w = session_str.len() as i32 * 9 - 1;
     let val_x = right_center - val_w / 2;
-    buf.draw_text(session_str, val_x, 34, 1, color_text_white);
+    buf.draw_text_tall(session_str, val_x, 34, color_text_white);
 
     buf
 }

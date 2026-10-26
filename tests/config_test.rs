@@ -4,7 +4,7 @@ fn test_default_config_values() {
     assert_eq!(cfg.interval_minutes, 30);
     assert_eq!(cfg.display_duration_secs, 4);
     assert_eq!(cfg.time_format, "12h");
-    assert_eq!(cfg.position, "top-right");
+    assert_eq!(cfg.position, "top-center");
     assert!(!cfg.run_on_startup);
 }
 

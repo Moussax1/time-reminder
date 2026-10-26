@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW,
-    MonitorFromWindow, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-    BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    CreateCompatibleDC, CreateDIBSection, CreateRoundRectRgn, DeleteDC, DeleteObject, GetDC,
+    GetMonitorInfoW, MonitorFromWindow, ReleaseDC, SelectObject, SetWindowRgn, BITMAPINFO,
+    BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
@@ -68,7 +68,10 @@ unsafe extern "system" fn overlay_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    DefWindowProcW(hwnd, msg, wparam, lparam)
+    match msg {
+        windows::Win32::UI::WindowsAndMessaging::WM_ERASEBKGND => LRESULT(1),
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
 }
 
 impl OverlayWindow {
@@ -119,6 +122,12 @@ impl OverlayWindow {
                 None,
             )?;
 
+            // Mask window region to clean rounded corners, eliminating any sharp corner artifacts
+            let hrgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, 33, 33);
+            if !hrgn.is_invalid() && SetWindowRgn(hwnd, hrgn, true) == 0 {
+                let _ = DeleteObject(hrgn);
+            }
+
             Ok(Self {
                 hwnd,
                 width,
@@ -166,9 +175,9 @@ impl OverlayWindow {
             };
 
             let (target_x, target_y) = match self.position.as_str() {
-                "top-left" => (screen_x + 24, screen_y + 24),
-                "top-center" => (screen_x + (screen_w - self.width) / 2, screen_y + 20),
-                _ => (screen_x + screen_w - self.width - 24, screen_y + 24), // default top-right
+                "top-left" => (screen_x + 24, screen_y + 42),
+                "top-center" => (screen_x + (screen_w - self.width) / 2, screen_y + 38),
+                _ => (screen_x + screen_w - self.width - 24, screen_y + 42), // default top-right
             };
 
             // Start offscreen above monitor

@@ -5,9 +5,9 @@ use std::sync::{Mutex, Once};
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW,
-    MonitorFromPoint, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-    DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    CreateCompatibleDC, CreateDIBSection, CreateRoundRectRgn, DeleteDC, DeleteObject, GetDC,
+    GetMonitorInfoW, MonitorFromPoint, ReleaseDC, SelectObject, SetWindowRgn, BITMAPINFO,
+    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -40,18 +40,20 @@ impl ButtonRect {
     }
 }
 
-pub const BTN_CLOSE_X: ButtonRect = ButtonRect::new(430, 10, 40, 25);
-pub const BTN_BOOT_ON: ButtonRect = ButtonRect::new(35, 260, 200, 30);
-pub const BTN_BOOT_OFF: ButtonRect = ButtonRect::new(245, 260, 200, 30);
+pub const BTN_CLOSE_X: ButtonRect = ButtonRect::new(425, 8, 35, 28);
+pub const BTN_BOOT_ON: ButtonRect = ButtonRect::new(25, 260, 210, 30);
+pub const BTN_BOOT_OFF: ButtonRect = ButtonRect::new(245, 260, 210, 30);
 pub const BTN_EXIT: ButtonRect = ButtonRect::new(25, 325, 105, 32);
 pub const BTN_TEST: ButtonRect = ButtonRect::new(140, 325, 105, 32);
 pub const BTN_CANCEL: ButtonRect = ButtonRect::new(255, 325, 85, 32);
 pub const BTN_SAVE: ButtonRect = ButtonRect::new(350, 325, 105, 32);
+pub const BTN_RESET_SESSION: ButtonRect = ButtonRect::new(315, 360, 140, 24);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsAction {
     Save(Config),
     TestNotif(Config),
+    ResetSession(Config),
     ExitApp,
     Cancel,
 }
@@ -59,8 +61,8 @@ pub enum SettingsAction {
 pub struct SettingsState {
     pub config: Config,
     pub action: SettingsAction,
-    pub was_active: bool,
     pub closed: bool,
+    pub opened_at: std::time::Instant,
 }
 
 static GLOBAL_SETTINGS_STATE: Mutex<Option<SettingsState>> = Mutex::new(None);
@@ -86,7 +88,9 @@ fn request_close(hwnd: HWND, action: SettingsAction) {
         // SAFETY: hwnd is the valid settings dialog window handle. DestroyWindow cleans up
         // the Win32 window resources and PostMessageW unblocks any waiting message loops.
         unsafe {
-            let _ = DestroyWindow(hwnd);
+            if !hwnd.is_invalid() {
+                let _ = DestroyWindow(hwnd);
+            }
             let _ = PostMessageW(HWND::default(), WM_NULL, WPARAM(0), LPARAM(0));
         }
     }
@@ -154,39 +158,50 @@ unsafe extern "system" fn settings_wndproc(
                 }
                 return LRESULT(0);
             }
+            if BTN_RESET_SESSION.contains(x, y) {
+                let cfg = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
+                    guard.as_ref().map(|s| s.config.clone())
+                } else {
+                    None
+                };
+                if let Some(cfg) = cfg {
+                    request_close(hwnd, SettingsAction::ResetSession(cfg));
+                }
+                return LRESULT(0);
+            }
 
             if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
                 if let Some(state) = guard.as_mut() {
                     let mut needs_redraw = false;
 
-                    // Intervals: 15m, 30m, 45m, 60m
-                    let intervals = [(35, 15), (140, 30), (245, 45), (350, 60)];
+                    // Intervals: 15m, 30m, 45m, 60m (flush grid 25..455)
+                    let intervals = [(25, 15), (135, 30), (245, 45), (355, 60)];
                     for (bx, val) in intervals {
-                        if (bx..bx + 95).contains(&x) && (65..65 + 30).contains(&y) {
+                        if (bx..bx + 100).contains(&x) && (65..65 + 30).contains(&y) {
                             state.config.interval_minutes = val;
                             needs_redraw = true;
                         }
                     }
 
-                    // Positions: Top-Right (35), Top-Center (175), Top-Left (315)
-                    let positions = [(35, "top-right"), (175, "top-center"), (315, "top-left")];
+                    // Positions: Top-Left (25), Top-Center (172), Top-Right (319) (flush grid 25..455)
+                    let positions = [(25, "top-left"), (172, "top-center"), (319, "top-right")];
                     for (bx, pos_str) in positions {
-                        if (bx..bx + 130).contains(&x) && (130..130 + 30).contains(&y) {
+                        if (bx..bx + 136).contains(&x) && (130..130 + 30).contains(&y) {
                             state.config.position = pos_str.to_string();
                             needs_redraw = true;
                         }
                     }
 
-                    // Formats: 12-Hour (35, w=200), 24-Hour (245, w=200)
-                    if (35..235).contains(&x) && (195..195 + 30).contains(&y) {
+                    // Formats: 12-Hour (25, w=210), 24-Hour (245, w=210) (flush grid 25..455)
+                    if (25..235).contains(&x) && (195..195 + 30).contains(&y) {
                         state.config.time_format = "12h".to_string();
                         needs_redraw = true;
-                    } else if (245..445).contains(&x) && (195..195 + 30).contains(&y) {
+                    } else if (245..455).contains(&x) && (195..195 + 30).contains(&y) {
                         state.config.time_format = "24h".to_string();
                         needs_redraw = true;
                     }
 
-                    // Start on Boot: Enabled (35, w=200), Disabled (245, w=200)
+                    // Start on Boot: Enabled (25, w=210), Disabled (245, w=210) (flush grid 25..455)
                     if BTN_BOOT_ON.contains(x, y) {
                         state.config.run_on_startup = true;
                         needs_redraw = true;
@@ -230,22 +245,17 @@ unsafe extern "system" fn settings_wndproc(
                 "settings_wndproc: WM_ACTIVATE active={}, hwnd={:?}",
                 active, hwnd
             ));
-            if active != 0 {
-                // Window activated
-                if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
-                    if let Some(state) = guard.as_mut() {
-                        state.was_active = true;
-                    }
-                }
-            } else {
-                // WA_INACTIVE: user clicked outside or switched window -> dismiss flyout
+            if active == 0 {
+                // WA_INACTIVE: user clicked outside or switched window -> dismiss flyout.
+                // Guard: Only dismiss if open for >=250ms to avoid premature close during initial window creation.
                 let should_close = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
                     if let Some(state) = guard.as_ref() {
+                        let open_time = state.opened_at.elapsed();
                         log_debug(&format!(
-                            "settings_wndproc: WA_INACTIVE was_active={}, closed={}",
-                            state.was_active, state.closed
+                            "settings_wndproc: WA_INACTIVE closed={}, elapsed={:?}",
+                            state.closed, open_time
                         ));
-                        state.was_active && !state.closed
+                        !state.closed && open_time > std::time::Duration::from_millis(250)
                     } else {
                         false
                     }
@@ -271,12 +281,16 @@ unsafe extern "system" fn settings_wndproc(
                     state.closed = true;
                 }
             }
+            // SAFETY: Posts a null message to the calling thread's message queue to awaken
+            // GetMessageW in the modal loop, allowing it to inspect state.closed and exit cleanly.
             unsafe {
                 let _ = PostMessageW(HWND::default(), WM_NULL, WPARAM(0), LPARAM(0));
             }
             LRESULT(0)
         }
+        windows::Win32::UI::WindowsAndMessaging::WM_ERASEBKGND => LRESULT(1),
         WM_SETCURSOR => {
+            // SAFETY: Loads and applies the standard system arrow cursor (IDC_ARROW) over the window client area.
             unsafe {
                 let cursor = LoadCursorW(None, IDC_ARROW).unwrap_or_default();
                 SetCursor(cursor);
@@ -289,19 +303,20 @@ unsafe extern "system" fn settings_wndproc(
 
 pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
     let width = 480;
-    let height = 375;
+    let height = 398;
     let mut buf = PixelBuffer::new(width, height, 0x00000000);
 
     let col_bg = 0xFF000000;
     let col_white = 0xFFFFFFFF;
     let col_btn_bg = 0xFF141414;
     let col_btn_border = 0xFF444444;
-    let col_muted = 0xFF888888;
+    let col_muted = 0xFFB0B0B0;
     let col_black = 0xFF000000;
     let col_exit_bg = 0xFF280A0A;
     let col_exit_red = 0xFFFF4444;
+    let col_accent = 0xFF00FF9D;
 
-    // Outer Dialog (r=16, 3px white border)
+    // Outer Dialog (r=16, 3px Cyber Mint brand border)
     buf.draw_rounded_rect(
         2,
         2,
@@ -309,75 +324,71 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
         height as i32 - 4,
         16,
         col_bg,
-        col_white,
+        col_accent,
         3,
     );
 
     // Titlebar
-    buf.draw_text("► TIME REMINDER CONFIG", 25, 20, 1, col_white);
-    buf.draw_text("[X]", 438, 20, 1, col_muted);
+    buf.draw_text("■", 25, 20, 1, col_accent);
+    buf.draw_text(" TIME REMINDER CONFIG", 34, 20, 1, col_white);
+    buf.draw_text("[X]", 430, 20, 1, col_muted);
 
-    // Horizontal Line
-    for px in 20..460 {
+    // Horizontal Line (flush grid 25..455)
+    for px in 25..456 {
         buf.set_pixel(px, 38, col_white);
     }
 
     // 1. INTERVAL SECTION
     buf.draw_text("INTERVAL:", 25, 50, 1, col_muted);
     let intervals = [
-        (35, 15, "15M"),
-        (140, 30, "30M"),
+        (25, 15, "15M"),
+        (135, 30, "30M"),
         (245, 45, "45M"),
-        (350, 60, "60M"),
+        (355, 60, "60M"),
     ];
     for (bx, val, label) in intervals {
         let is_selected = cfg.interval_minutes == val;
         let (bg, border, text_col) = if is_selected {
-            (col_white, col_white, col_black)
+            (col_accent, col_accent, col_black)
         } else {
             (col_btn_bg, col_btn_border, col_muted)
         };
-        buf.draw_rounded_rect(bx, 65, 95, 30, 6, bg, border, 1);
-        let text_with_mark = if is_selected {
-            format!("{} ✓", label)
-        } else {
-            label.to_string()
-        };
-        let text_w = text_with_mark.len() as i32 * 9 - 1;
-        let text_x = bx + (95 - text_w) / 2;
-        buf.draw_text(&text_with_mark, text_x, 74, 1, text_col);
+        buf.draw_rounded_rect(bx, 65, 100, 30, 6, bg, border, 1);
+        let text_w = label.len() as i32 * 9 - 1;
+        let text_x = bx + (100 - text_w) / 2;
+        buf.draw_text(label, text_x, 74, 1, text_col);
     }
 
     // 2. POSITION SECTION
     buf.draw_text("SCREEN POSITION:", 25, 115, 1, col_muted);
     let positions = [
-        (35, "top-right", "TOP-RIGHT"),
-        (175, "top-center", "TOP-CENTER"),
-        (315, "top-left", "TOP-LEFT"),
+        (25, "top-left", "TOP-LEFT"),
+        (172, "top-center", "TOP-CENTER"),
+        (319, "top-right", "TOP-RIGHT"),
     ];
     for (bx, pos_val, label) in positions {
         let is_selected = cfg.position == pos_val;
         let (bg, border, text_col) = if is_selected {
-            (col_white, col_white, col_black)
+            (col_accent, col_accent, col_black)
         } else {
             (col_btn_bg, col_btn_border, col_muted)
         };
-        buf.draw_rounded_rect(bx, 130, 130, 30, 6, bg, border, 1);
+        buf.draw_rounded_rect(bx, 130, 136, 30, 6, bg, border, 1);
         let text_w = label.len() as i32 * 9 - 1;
-        let text_x = bx + (130 - text_w) / 2;
+        let text_x = bx + (136 - text_w) / 2;
         buf.draw_text(label, text_x, 139, 1, text_col);
     }
 
     // 3. CLOCK FORMAT SECTION
     buf.draw_text("CLOCK FORMAT:", 25, 180, 1, col_muted);
     let formats = [
-        (35, "12h", "12-HOUR (AM/PM)", 200),
-        (245, "24h", "24-HOUR (MILITARY)", 200),
+        (25, "12h", "12-HOUR (AM/PM)", 210),
+        (245, "24h", "24-HOUR (MILITARY)", 210),
     ];
     for (bx, fmt_val, label, bw) in formats {
         let is_selected = cfg.time_format == fmt_val;
         let (bg, border, text_col) = if is_selected {
-            (col_white, col_white, col_black)
+            (col_accent, col_accent, col_black)
         } else {
             (col_btn_bg, col_btn_border, col_muted)
         };
@@ -389,27 +400,22 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
 
     // 4. START ON BOOT SECTION
     buf.draw_text("START ON BOOT:", 25, 245, 1, col_muted);
-    let boot_options = [(35, true, "ENABLED", 200), (245, false, "DISABLED", 200)];
+    let boot_options = [(25, true, "ENABLED", 210), (245, false, "DISABLED", 210)];
     for (bx, val, label, bw) in boot_options {
         let is_selected = cfg.run_on_startup == val;
         let (bg, border, text_col) = if is_selected {
-            (col_white, col_white, col_black)
+            (col_accent, col_accent, col_black)
         } else {
             (col_btn_bg, col_btn_border, col_muted)
         };
         buf.draw_rounded_rect(bx, 260, bw, 30, 6, bg, border, 1);
-        let text_with_mark = if is_selected {
-            format!("{} ✓", label)
-        } else {
-            label.to_string()
-        };
-        let text_w = text_with_mark.len() as i32 * 9 - 1;
+        let text_w = label.len() as i32 * 9 - 1;
         let text_x = bx + (bw - text_w) / 2;
-        buf.draw_text(&text_with_mark, text_x, 269, 1, text_col);
+        buf.draw_text(label, text_x, 269, 1, text_col);
     }
 
-    // Divider
-    for px in 20..460 {
+    // Divider (flush grid 25..455)
+    for px in 25..456 {
         buf.set_pixel(px, 310, col_btn_border);
     }
 
@@ -423,15 +429,19 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
     let test_w = "TEST OSD".len() as i32 * 9 - 1;
     buf.draw_text("TEST OSD", 140 + (105 - test_w) / 2, 337, 1, col_white);
 
-    // 3. CANCEL (dark bg, muted text)
+    // 3. CANCEL (dark bg, white text)
     buf.draw_rounded_rect(255, 325, 85, 32, 6, col_btn_bg, col_btn_border, 1);
     let cancel_w = "CANCEL".len() as i32 * 9 - 1;
-    buf.draw_text("CANCEL", 255 + (85 - cancel_w) / 2, 337, 1, col_muted);
+    buf.draw_text("CANCEL", 255 + (85 - cancel_w) / 2, 337, 1, col_white);
 
-    // 4. SAVE (white solid bg, black text)
-    buf.draw_rounded_rect(350, 325, 105, 32, 6, col_white, col_white, 1);
+    // 4. SAVE (accent Cyber Mint pill, high contrast black text)
+    buf.draw_rounded_rect(350, 325, 105, 32, 6, col_accent, col_accent, 1);
     let save_w = "SAVE".len() as i32 * 9 - 1;
     buf.draw_text("SAVE", 350 + (105 - save_w) / 2, 337, 1, col_black);
+
+    // Footer Hints & Quick Actions (HOTKEY: ALT-T and [RESET SESSION])
+    buf.draw_text("HOTKEY: ALT-T", 25, 368, 1, col_muted);
+    buf.draw_text("[RESET SESSION]", 319, 368, 1, col_muted);
 
     buf
 }
@@ -584,40 +594,25 @@ pub fn get_tray_flyout_position(width: i32, height: i32) -> (i32, i32) {
     calculate_tray_flyout_pos(width, height, work_area.right, work_area.bottom)
 }
 
-pub fn enable_dpi_awareness() {
-    // SAFETY: Dynamically queries user32.dll for SetProcessDpiAwarenessContext, which is
-    // available on Windows 10/11. Does nothing if not present, preventing crashes on older OS versions.
-    unsafe {
-        // SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4)
-        if let Ok(user32) =
-            windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll"))
-        {
-            let proc_name = std::ffi::CString::new("SetProcessDpiAwarenessContext").unwrap();
-            if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(
-                user32,
-                windows::core::PCSTR(proc_name.as_ptr() as *const u8),
-            ) {
-                type SetProcessDpiAwarenessContextFn =
-                    unsafe extern "system" fn(isize) -> windows::Win32::Foundation::BOOL;
-                let func: SetProcessDpiAwarenessContextFn = std::mem::transmute(proc);
-                let _ = func(-4);
-            }
-        }
-    }
-}
+pub use crate::enable_dpi_awareness;
 
 pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
     enable_dpi_awareness();
     let class_name = w!("TimeReminderSettingsClass");
-    let state = SettingsState {
-        config: current_cfg.clone(),
-        action: SettingsAction::Cancel,
-        was_active: false,
-        closed: false,
-    };
 
     if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
-        *g = Some(state);
+        if let Some(state) = g.as_ref() {
+            if !state.closed {
+                log_debug("show_settings_dialog: dialog already open, ignoring duplicate call");
+                return SettingsAction::Cancel;
+            }
+        }
+        *g = Some(SettingsState {
+            config: current_cfg.clone(),
+            action: SettingsAction::Cancel,
+            closed: false,
+            opened_at: std::time::Instant::now(),
+        });
     }
 
     // SAFETY: Initializes the modal settings GUI window, registers window class,
@@ -646,7 +641,7 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
         });
 
         let width = 480;
-        let height = 375;
+        let height = 398;
         let (x, y) = get_tray_flyout_position(width, height);
 
         let hwnd = match CreateWindowExW(
@@ -667,6 +662,12 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
             _ => return SettingsAction::Cancel,
         };
 
+        // Mask window region to clean rounded corners, eliminating any sharp corner artifacts
+        let hrgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, 33, 33);
+        if !hrgn.is_invalid() && SetWindowRgn(hwnd, hrgn, true) == 0 {
+            let _ = DeleteObject(hrgn);
+        }
+
         render_and_update(hwnd, current_cfg);
         let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
         let _ = ShowWindow(hwnd, SW_SHOW);
@@ -674,13 +675,8 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
         let _ = SetForegroundWindow(hwnd);
         let _ = SetCursor(LoadCursorW(None, IDC_ARROW).unwrap_or_default());
 
-        if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
-            if let Some(s) = g.as_mut() {
-                s.was_active = true;
-            }
-        }
-
-        // Run modal message loop strictly scoped to hwnd so main thread timer/hotkey messages remain queued
+        // Run modal message loop with None so all thread messages (hotkey, timers, overlay)
+        // are properly pumped and never starved or deadlocked.
         let mut msg = MSG::default();
         loop {
             let is_closed = GLOBAL_SETTINGS_STATE
@@ -693,13 +689,15 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
                 break;
             }
 
-            let res = GetMessageW(&mut msg, hwnd, 0, 0);
+            let res = GetMessageW(&mut msg, None, 0, 0);
             if res.0 <= 0 || msg.message == WM_QUIT {
                 log_debug(&format!(
                     "show_settings_dialog: received WM_QUIT or exit, wParam={}",
                     msg.wParam.0
                 ));
-                PostQuitMessage(msg.wParam.0 as i32);
+                if msg.message == WM_QUIT {
+                    PostQuitMessage(msg.wParam.0 as i32);
+                }
                 break;
             }
 
