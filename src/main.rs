@@ -94,6 +94,28 @@ fn main() {
     let config_path = get_config_path();
     let mut config = load_config(&config_path);
 
+    // Enforce single instance: if another instance is already running, signal it to open settings and exit
+    // (Exempt --test-overlay so animation tests can run freely without interrupting the background daemon)
+    if !args.iter().any(|a| a == "--test-overlay") {
+        unsafe {
+            if let Ok(existing_hwnd) = windows::Win32::UI::WindowsAndMessaging::FindWindowW(
+                w!("TimeReminderDaemonClass"),
+                None,
+            ) {
+                if !existing_hwnd.is_invalid() {
+                    println!("Time Reminder daemon is already running. Focusing settings on active instance.");
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        existing_hwnd,
+                        WM_APP_TRAY_GUI,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
     // Test overlay CLI mode
     if args.iter().any(|a| a == "--test-overlay") {
         println!("Flashing test overlay with slide animation...");
@@ -111,16 +133,11 @@ fn main() {
 
     // Direct Settings CLI mode
     if args.iter().any(|a| a == "--settings") {
-        match show_settings_dialog(&config) {
+        match show_settings_dialog(&config, None) {
             SettingsAction::Save(new_cfg) => {
                 let _ = time_reminder::config::set_run_on_startup(new_cfg.run_on_startup);
                 let _ = save_config(&config_path, &new_cfg);
                 println!("Settings saved.");
-            }
-            SettingsAction::TestNotif(new_cfg) => {
-                let _ = time_reminder::config::set_run_on_startup(new_cfg.run_on_startup);
-                let _ = save_config(&config_path, &new_cfg);
-                println!("Settings saved and test requested.");
             }
             SettingsAction::ResetSession(new_cfg) => {
                 let _ = time_reminder::config::set_run_on_startup(new_cfg.run_on_startup);
@@ -142,23 +159,6 @@ fn main() {
     // SAFETY: Initializes the Win32 message-only daemon window,
     // global hotkey, system tray icon, and tick timer.
     unsafe {
-        // Enforce single instance: if another instance is already running, signal it and exit
-        if let Ok(existing_hwnd) = windows::Win32::UI::WindowsAndMessaging::FindWindowW(
-            w!("TimeReminderDaemonClass"),
-            None,
-        ) {
-            if !existing_hwnd.is_invalid() {
-                eprintln!("Another instance of Time Reminder is already running. Focusing existing instance.");
-                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    existing_hwnd,
-                    WM_APP_TRAY_GUI,
-                    windows::Win32::Foundation::WPARAM(0),
-                    windows::Win32::Foundation::LPARAM(0),
-                );
-                return;
-            }
-        }
-
         let hinstance = match windows::Win32::System::LibraryLoader::GetModuleHandleW(None) {
             Ok(h) => h,
             Err(_) => return,
@@ -319,7 +319,8 @@ fn main() {
             } else if msg.message == WM_APP_TRAY_GUI {
                 // Left-click -> Retro Settings GUI
                 log_debug("Opening 8-Bit Retro Settings GUI...");
-                let action = show_settings_dialog(&config);
+                overlay.hide();
+                let action = show_settings_dialog(&config, Some(tracker.elapsed_playtime()));
                 match action {
                     SettingsAction::Save(new_cfg) => {
                         let old_hotkey = config.hotkey.clone();
@@ -342,26 +343,8 @@ fn main() {
                             );
                         }
 
-                        if let Ok(new_overlay) =
-                            OverlayWindow::new(&config.position, config.display_duration_secs)
-                        {
-                            overlay = new_overlay;
-                        }
-                        log_debug("Settings saved. Triggering preview notification.");
-                        trigger_time_reminder(&mut overlay, &tracker, &config);
-                        overlay.update();
-                    }
-                    SettingsAction::TestNotif(new_cfg) => {
-                        config = new_cfg;
-                        let _ = save_config(&config_path, &config);
-                        if let Ok(new_overlay) =
-                            OverlayWindow::new(&config.position, config.display_duration_secs)
-                        {
-                            overlay = new_overlay;
-                        }
-                        log_debug("Test OSD triggered from Settings GUI.");
-                        trigger_time_reminder(&mut overlay, &tracker, &config);
-                        overlay.update();
+                        overlay.set_position(&config.position);
+                        log_debug("Settings saved. OSD preview closed.");
                     }
                     SettingsAction::ResetSession(new_cfg) => {
                         config = new_cfg;

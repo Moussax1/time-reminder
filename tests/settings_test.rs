@@ -43,25 +43,19 @@ fn test_settings_actions_and_hit_testing() {
     let exit_btn = ButtonRect {
         x: 25,
         y: 325,
-        w: 105,
-        h: 32,
-    };
-    let test_btn = ButtonRect {
-        x: 140,
-        y: 325,
-        w: 105,
+        w: 136,
         h: 32,
     };
     let cancel_btn = ButtonRect {
-        x: 255,
+        x: 172,
         y: 325,
-        w: 85,
+        w: 136,
         h: 32,
     };
     let save_btn = ButtonRect {
-        x: 350,
+        x: 319,
         y: 325,
-        w: 105,
+        w: 136,
         h: 32,
     };
 
@@ -72,27 +66,23 @@ fn test_settings_actions_and_hit_testing() {
 
     // Point in exit button
     assert!(exit_btn.contains(50, 335));
-    assert!(!test_btn.contains(50, 335));
-
-    // Point in test button
-    assert!(test_btn.contains(180, 335));
-    assert!(!save_btn.contains(180, 335));
+    assert!(!cancel_btn.contains(50, 335));
 
     // Point in cancel button
-    assert!(cancel_btn.contains(290, 335));
+    assert!(cancel_btn.contains(200, 335));
+    assert!(!save_btn.contains(200, 335));
 
     // Point in save button
     assert!(save_btn.contains(400, 335));
 
     let cfg = Config::default();
     let act_save = SettingsAction::Save(cfg.clone());
-    let act_test = SettingsAction::TestNotif(cfg.clone());
     let act_reset = SettingsAction::ResetSession(cfg);
     let act_exit = SettingsAction::ExitApp;
     let act_cancel = SettingsAction::Cancel;
 
     assert_ne!(act_exit, act_cancel);
-    assert_ne!(act_save, act_test);
+    assert_ne!(act_save, act_reset);
     assert_ne!(act_reset, act_cancel);
 }
 
@@ -130,7 +120,7 @@ fn test_export_settings_buffer_image() {
 #[test]
 fn test_settings_usability_and_layout_fixes() {
     use time_reminder::settings_gui::{
-        BTN_BOOT_OFF, BTN_BOOT_ON, BTN_CLOSE_X, BTN_RESET_SESSION, BTN_SAVE,
+        BTN_BOOT_OFF, BTN_BOOT_ON, BTN_CANCEL, BTN_CLOSE_X, BTN_EXIT, BTN_RESET_SESSION, BTN_SAVE,
     };
 
     // 1. Verify BTN_CLOSE_X is pulled inward flush with SAVE button right edge (455..460)
@@ -140,11 +130,22 @@ fn test_settings_usability_and_layout_fixes() {
     const { assert!(BTN_CLOSE_X.x + BTN_CLOSE_X.w <= 460) };
     assert!(BTN_CLOSE_X.contains(430, 20));
 
-    // 2. Verify SAVE button geometry and differentiation
-    assert_eq!(BTN_SAVE.x, 350);
-    assert_eq!(BTN_SAVE.w, 105);
-    let right_edge_save = BTN_SAVE.x + BTN_SAVE.w;
-    assert_eq!(right_edge_save, 455);
+    // 2. Verify 3-button bottom bar geometry and alignment (136px equal-width 3-column grid)
+    assert_eq!(BTN_EXIT.x, 25);
+    assert_eq!(BTN_EXIT.w, 136);
+    assert_eq!(BTN_EXIT.x + BTN_EXIT.w, 161);
+
+    assert_eq!(BTN_CANCEL.x, 172);
+    assert_eq!(BTN_CANCEL.w, 136);
+    assert_eq!(BTN_CANCEL.x + BTN_CANCEL.w, 308);
+
+    assert_eq!(BTN_SAVE.x, 319);
+    assert_eq!(BTN_SAVE.w, 136);
+    assert_eq!(BTN_SAVE.x + BTN_SAVE.w, 455);
+
+    // Verify 11px uniform gaps across columns
+    assert_eq!(BTN_CANCEL.x - (BTN_EXIT.x + BTN_EXIT.w), 11);
+    assert_eq!(BTN_SAVE.x - (BTN_CANCEL.x + BTN_CANCEL.w), 11);
 
     // 3. Verify unified strict column grid margins on boot toggle buttons (25..455)
     assert_eq!(BTN_BOOT_ON.x, 25);
@@ -160,7 +161,7 @@ fn test_settings_usability_and_layout_fixes() {
     let col_accent = 0xFF00FF9D;
     let mut found_accent = false;
     for y in 325..(325 + 32) {
-        for x in 350..(350 + 105) {
+        for x in 319..(319 + 136) {
             let px = buf.data[(y * buf.width as i32 + x) as usize];
             if px == col_accent {
                 found_accent = true;
@@ -180,7 +181,7 @@ fn test_settings_usability_and_layout_fixes() {
     let col_white = 0xFFFFFFFF;
     let mut found_cancel_white_text = false;
     for y in 325..(325 + 32) {
-        for x in 255..(255 + 85) {
+        for x in 172..(172 + 136) {
             let px = buf.data[(y * buf.width as i32 + x) as usize];
             if px == col_white {
                 found_cancel_white_text = true;

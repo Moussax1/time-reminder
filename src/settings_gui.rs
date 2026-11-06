@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::overlay::OverlayWindow;
 use crate::renderer::PixelBuffer;
 use crate::tray::log_debug;
 use std::sync::{Mutex, Once};
@@ -12,13 +13,13 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetCursorPos, GetMessageW, GetSystemMetrics, LoadCursorW, PostMessageW, PostQuitMessage,
-    RegisterClassW, SendMessageW, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, TranslateMessage, UpdateLayeredWindow, HICON, HTCAPTION, HWND_TOPMOST,
-    IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_SHOWWINDOW, SW_SHOW,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA, WM_ACTIVATE, WM_CLOSE, WM_DESTROY, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NULL, WM_QUIT, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    GetCursorPos, GetMessageW, GetSystemMetrics, KillTimer, LoadCursorW, PostMessageW,
+    PostQuitMessage, RegisterClassW, SendMessageW, SetCursor, SetForegroundWindow, SetTimer,
+    SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, UpdateLayeredWindow, HICON,
+    HTCAPTION, HWND_TOPMOST, IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA,
+    SWP_SHOWWINDOW, SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA, WM_ACTIVATE,
+    WM_CLOSE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NULL, WM_QUIT,
+    WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 // Rect for button hit-testing
@@ -43,16 +44,14 @@ impl ButtonRect {
 pub const BTN_CLOSE_X: ButtonRect = ButtonRect::new(425, 8, 35, 28);
 pub const BTN_BOOT_ON: ButtonRect = ButtonRect::new(25, 260, 210, 30);
 pub const BTN_BOOT_OFF: ButtonRect = ButtonRect::new(245, 260, 210, 30);
-pub const BTN_EXIT: ButtonRect = ButtonRect::new(25, 325, 105, 32);
-pub const BTN_TEST: ButtonRect = ButtonRect::new(140, 325, 105, 32);
-pub const BTN_CANCEL: ButtonRect = ButtonRect::new(255, 325, 85, 32);
-pub const BTN_SAVE: ButtonRect = ButtonRect::new(350, 325, 105, 32);
+pub const BTN_EXIT: ButtonRect = ButtonRect::new(25, 325, 136, 32);
+pub const BTN_CANCEL: ButtonRect = ButtonRect::new(172, 325, 136, 32);
+pub const BTN_SAVE: ButtonRect = ButtonRect::new(319, 325, 136, 32);
 pub const BTN_RESET_SESSION: ButtonRect = ButtonRect::new(315, 360, 140, 24);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsAction {
     Save(Config),
-    TestNotif(Config),
     ResetSession(Config),
     ExitApp,
     Cancel,
@@ -63,10 +62,23 @@ pub struct SettingsState {
     pub action: SettingsAction,
     pub closed: bool,
     pub opened_at: std::time::Instant,
+    pub preview_overlay: Option<OverlayWindow>,
+    pub session_str: String,
 }
 
 static GLOBAL_SETTINGS_STATE: Mutex<Option<SettingsState>> = Mutex::new(None);
 static REGISTER_SETTINGS_CLASS: Once = Once::new();
+
+pub fn update_preview_hud(overlay: &mut OverlayWindow, cfg: &Config, session_str: &str) {
+    // Windows local time via SystemTime conversion
+    let local = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    let (time_str, ampm_str) = crate::renderer::format_clock(
+        local.wHour as u32,
+        local.wMinute as u32,
+        &cfg.time_format,
+    );
+    overlay.show_preview(&time_str, &ampm_str, session_str, &cfg.position);
+}
 
 fn request_close(hwnd: HWND, action: SettingsAction) {
     log_debug(&format!(
@@ -81,6 +93,9 @@ fn request_close(hwnd: HWND, action: SettingsAction) {
             } else {
                 state.action = action;
                 state.closed = true;
+                if let Some(ref mut overlay) = state.preview_overlay {
+                    overlay.hide();
+                }
             }
         }
     }
@@ -132,17 +147,6 @@ unsafe extern "system" fn settings_wndproc(
                 request_close(hwnd, SettingsAction::ExitApp);
                 return LRESULT(0);
             }
-            if BTN_TEST.contains(x, y) {
-                let cfg = if let Ok(guard) = GLOBAL_SETTINGS_STATE.lock() {
-                    guard.as_ref().map(|s| s.config.clone())
-                } else {
-                    None
-                };
-                if let Some(cfg) = cfg {
-                    request_close(hwnd, SettingsAction::TestNotif(cfg));
-                }
-                return LRESULT(0);
-            }
             if BTN_CANCEL.contains(x, y) {
                 request_close(hwnd, SettingsAction::Cancel);
                 return LRESULT(0);
@@ -177,7 +181,10 @@ unsafe extern "system" fn settings_wndproc(
                     // Intervals: 15m, 30m, 45m, 60m (flush grid 25..455)
                     let intervals = [(25, 15), (135, 30), (245, 45), (355, 60)];
                     for (bx, val) in intervals {
-                        if (bx..bx + 100).contains(&x) && (65..65 + 30).contains(&y) {
+                        if (bx..bx + 100).contains(&x)
+                            && (65..65 + 30).contains(&y)
+                            && state.config.interval_minutes != val
+                        {
                             state.config.interval_minutes = val;
                             needs_redraw = true;
                         }
@@ -186,32 +193,44 @@ unsafe extern "system" fn settings_wndproc(
                     // Positions: Top-Left (25), Top-Center (172), Top-Right (319) (flush grid 25..455)
                     let positions = [(25, "top-left"), (172, "top-center"), (319, "top-right")];
                     for (bx, pos_str) in positions {
-                        if (bx..bx + 136).contains(&x) && (130..130 + 30).contains(&y) {
+                        if (bx..bx + 136).contains(&x)
+                            && (130..130 + 30).contains(&y)
+                            && state.config.position != pos_str
+                        {
                             state.config.position = pos_str.to_string();
                             needs_redraw = true;
                         }
                     }
 
                     // Formats: 12-Hour (25, w=210), 24-Hour (245, w=210) (flush grid 25..455)
-                    if (25..235).contains(&x) && (195..195 + 30).contains(&y) {
+                    if (25..235).contains(&x)
+                        && (195..195 + 30).contains(&y)
+                        && state.config.time_format != "12h"
+                    {
                         state.config.time_format = "12h".to_string();
                         needs_redraw = true;
-                    } else if (245..455).contains(&x) && (195..195 + 30).contains(&y) {
+                    } else if (245..455).contains(&x)
+                        && (195..195 + 30).contains(&y)
+                        && state.config.time_format != "24h"
+                    {
                         state.config.time_format = "24h".to_string();
                         needs_redraw = true;
                     }
 
                     // Start on Boot: Enabled (25, w=210), Disabled (245, w=210) (flush grid 25..455)
-                    if BTN_BOOT_ON.contains(x, y) {
+                    if BTN_BOOT_ON.contains(x, y) && !state.config.run_on_startup {
                         state.config.run_on_startup = true;
                         needs_redraw = true;
-                    } else if BTN_BOOT_OFF.contains(x, y) {
+                    } else if BTN_BOOT_OFF.contains(x, y) && state.config.run_on_startup {
                         state.config.run_on_startup = false;
                         needs_redraw = true;
                     }
 
                     if needs_redraw {
                         render_and_update(hwnd, &state.config);
+                        if let Some(ref mut overlay) = state.preview_overlay {
+                            update_preview_hud(overlay, &state.config, &state.session_str);
+                        }
                     }
                 }
             }
@@ -296,6 +315,16 @@ unsafe extern "system" fn settings_wndproc(
                 SetCursor(cursor);
             }
             LRESULT(1)
+        }
+        WM_TIMER if wparam.0 == 200 => {
+            if let Ok(mut guard) = GLOBAL_SETTINGS_STATE.lock() {
+                if let Some(state) = guard.as_mut() {
+                    if let Some(ref mut overlay) = state.preview_overlay {
+                        update_preview_hud(overlay, &state.config, &state.session_str);
+                    }
+                }
+            }
+            LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -420,24 +449,19 @@ pub fn render_settings_buffer(cfg: &Config) -> PixelBuffer {
     }
 
     // 1. EXIT APP (dark red bg, bright red border & text)
-    buf.draw_rounded_rect(25, 325, 105, 32, 6, col_exit_bg, col_exit_red, 1);
+    buf.draw_rounded_rect(25, 325, 136, 32, 6, col_exit_bg, col_exit_red, 1);
     let exit_w = "EXIT APP".len() as i32 * 9 - 1;
-    buf.draw_text("EXIT APP", 25 + (105 - exit_w) / 2, 337, 1, col_exit_red);
+    buf.draw_text("EXIT APP", 25 + (136 - exit_w) / 2, 337, 1, col_exit_red);
 
-    // 2. TEST OSD (dark bg, white text)
-    buf.draw_rounded_rect(140, 325, 105, 32, 6, col_btn_bg, col_btn_border, 1);
-    let test_w = "TEST OSD".len() as i32 * 9 - 1;
-    buf.draw_text("TEST OSD", 140 + (105 - test_w) / 2, 337, 1, col_white);
-
-    // 3. CANCEL (dark bg, white text)
-    buf.draw_rounded_rect(255, 325, 85, 32, 6, col_btn_bg, col_btn_border, 1);
+    // 2. CANCEL (dark bg, white text)
+    buf.draw_rounded_rect(172, 325, 136, 32, 6, col_btn_bg, col_btn_border, 1);
     let cancel_w = "CANCEL".len() as i32 * 9 - 1;
-    buf.draw_text("CANCEL", 255 + (85 - cancel_w) / 2, 337, 1, col_white);
+    buf.draw_text("CANCEL", 172 + (136 - cancel_w) / 2, 337, 1, col_white);
 
-    // 4. SAVE (accent Cyber Mint pill, high contrast black text)
-    buf.draw_rounded_rect(350, 325, 105, 32, 6, col_accent, col_accent, 1);
+    // 3. SAVE (accent Cyber Mint pill, high contrast black text)
+    buf.draw_rounded_rect(319, 325, 136, 32, 6, col_accent, col_accent, 1);
     let save_w = "SAVE".len() as i32 * 9 - 1;
-    buf.draw_text("SAVE", 350 + (105 - save_w) / 2, 337, 1, col_black);
+    buf.draw_text("SAVE", 319 + (136 - save_w) / 2, 337, 1, col_black);
 
     // Footer Hints & Quick Actions (HOTKEY: ALT-T and [RESET SESSION])
     buf.draw_text("HOTKEY: ALT-T", 25, 368, 1, col_muted);
@@ -596,22 +620,36 @@ pub fn get_tray_flyout_position(width: i32, height: i32) -> (i32, i32) {
 
 pub use crate::enable_dpi_awareness;
 
-pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
+pub fn show_settings_dialog(
+    current_cfg: &Config,
+    session_duration: Option<std::time::Duration>,
+) -> SettingsAction {
     enable_dpi_awareness();
     let class_name = w!("TimeReminderSettingsClass");
 
-    if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
+    let session_str = session_duration
+        .map(crate::detector::format_session)
+        .unwrap_or_else(|| "00H 00M".to_string());
+
+    if let Ok(g) = GLOBAL_SETTINGS_STATE.lock() {
         if let Some(state) = g.as_ref() {
             if !state.closed {
                 log_debug("show_settings_dialog: dialog already open, ignoring duplicate call");
                 return SettingsAction::Cancel;
             }
         }
+    }
+
+    let preview = OverlayWindow::new(&current_cfg.position, 4).ok();
+
+    if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
         *g = Some(SettingsState {
             config: current_cfg.clone(),
             action: SettingsAction::Cancel,
             closed: false,
             opened_at: std::time::Instant::now(),
+            preview_overlay: preview,
+            session_str,
         });
     }
 
@@ -675,6 +713,18 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
         let _ = SetForegroundWindow(hwnd);
         let _ = SetCursor(LoadCursorW(None, IDC_ARROW).unwrap_or_default());
 
+        // Update preview HUD on screen now that the settings window is foregrounded on the active monitor
+        if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
+            if let Some(state) = g.as_mut() {
+                if let Some(ref mut overlay) = state.preview_overlay {
+                    update_preview_hud(overlay, &state.config, &state.session_str);
+                }
+            }
+        }
+
+        // 1-second timer to update clock display while settings window is open
+        let _ = SetTimer(hwnd, 200, 1000, None);
+
         // Run modal message loop with None so all thread messages (hotkey, timers, overlay)
         // are properly pumped and never starved or deadlocked.
         let mut msg = MSG::default();
@@ -704,13 +754,20 @@ pub fn show_settings_dialog(current_cfg: &Config) -> SettingsAction {
             let _ = TranslateMessage(&msg);
             let _ = DispatchMessageW(&msg);
         }
+
+        let _ = KillTimer(hwnd, 200);
     }
 
-    let action = if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
-        g.take().map(|s| s.action).unwrap_or(SettingsAction::Cancel)
+    let (action, preview_to_drop) = if let Ok(mut g) = GLOBAL_SETTINGS_STATE.lock() {
+        if let Some(state) = g.take() {
+            (state.action, state.preview_overlay)
+        } else {
+            (SettingsAction::Cancel, None)
+        }
     } else {
-        SettingsAction::Cancel
+        (SettingsAction::Cancel, None)
     };
+    drop(preview_to_drop);
 
     // Trim process working set after closing the configuration GUI to free all dialog allocations
     crate::trim_working_set();

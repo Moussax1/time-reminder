@@ -7,7 +7,7 @@ pub mod settings_gui;
 pub mod tray;
 
 pub fn version() -> &'static str {
-    "0.1.0"
+    env!("CARGO_PKG_VERSION")
 }
 
 /// Trims the process working set to release unneeded physical memory pages back to the OS.

@@ -25,7 +25,7 @@ Time Reminder is a background Windows application that briefly flashes a retro 8
 - **Smart Game Detection**: Uses Win32 user notification state (`SHQueryUserNotificationState`) and foreground window bounds to detect full-screen games. Session playtime pauses automatically when you Alt-Tab or close the game.
 - **Click-Through HUD**: Rendered with `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST`. Mouse clicks pass through directly to your game without interrupting input or stealing focus.
 - **Custom 8-Bit Software Renderer**: Handcrafted arcade bitmap font rendered into a 32bpp BGRA buffer with antialiased rounded pill corners and slide-in animations.
-- **Interactive Retro Settings GUI**: Toggle reminder intervals (15m, 30m, 45m, 60m), clock format (12h/24h), screen position, and startup boot behavior from the tray menu or the retro settings window.
+- **Interactive Retro Settings GUI with Live Preview**: Live on-screen HUD preview that dynamically updates as you configure screen position and clock format in real time, disappearing cleanly when saved or dismissed. Toggle intervals (15m, 30m, 45m, 60m), 12h/24h format, and Windows startup behavior.
 
 ![Retro Settings GUI](docs/assets/retro-settings-window.png)
 
@@ -33,11 +33,11 @@ Time Reminder is a background Windows application that briefly flashes a retro 8
 
 ### Download and Run
 
-1. Grab the latest release archive (`time-reminder-v0.1.0-windows-x64.zip`) from the Releases page or [`dist/`](dist/).
+1. Grab the latest release archive (`time-reminder-v0.2.0-windows-x64.zip`) from the Releases page or [`dist/`](dist/).
 2. Extract the folder anywhere on your computer.
 3. Double-click `TimeReminder.bat` or run `time-reminder.exe`.
 
-When launched, the reminder card flashes once in the top-right corner to confirm it is active, then sits quietly in your system tray.
+When launched, the reminder card flashes once at the configured screen position to confirm it is active, then sits quietly in your system tray.
 
 ### Controls
 
@@ -45,10 +45,10 @@ When launched, the reminder card flashes once in the top-right corner to confirm
 |---|---|
 | **Manual Flash** | Press `Alt + T` anytime (including during full-screen games) |
 | **System Tray Menu** | Right-click the hourglass icon in the Windows taskbar tray |
-| **Open Settings GUI** | Click **Settings...** in the tray menu, or run `time-reminder.exe --settings` |
-| **Reset Session** | Click **Reset Session Time** in the tray menu |
+| **Open Settings GUI** | Left-click the tray icon, click **Settings...** in the tray menu, or run `time-reminder.exe --settings` |
+| **Reset Session** | Click `[RESET SESSION]` in the Settings GUI or **Reset Session Timer** in the tray menu |
 | **Test Notification** | Click **Test Notification** in the tray menu, or run `time-reminder.exe --test-overlay` |
-| **Quit** | Click **Exit** in the tray menu |
+| **Quit** | Click `EXIT APP` in the Settings GUI or **Exit** in the tray menu |
 
 ## CLI Options
 
@@ -71,9 +71,9 @@ Settings are saved in `config.json` next to `time-reminder.exe`. You can edit th
 {
   "interval_minutes": 30,
   "display_duration_secs": 4,
-  "position": "top-right",
   "time_format": "12h",
-  "theme": "monochrome",
+  "position": "top-center",
+  "hotkey": "Alt+T",
   "run_on_startup": false
 }
 ```
@@ -82,9 +82,9 @@ Settings are saved in `config.json` next to `time-reminder.exe`. You can edit th
 |---|---|---|---|
 | `interval_minutes` | `15`, `30`, `45`, `60` | `30` | Active gaming time between reminder alerts. |
 | `display_duration_secs` | Integer (e.g. `4`) | `4` | How long the reminder card stays visible on screen. |
-| `position` | `"top-right"`, `"top-center"`, `"top-left"` | `"top-right"` | Screen anchor location for the overlay. |
+| `position` | `"top-center"`, `"top-left"`, `"top-right"` | `"top-center"` | Screen anchor location for the overlay. |
 | `time_format` | `"12h"`, `"24h"` | `"12h"` | Clock display format (12-hour with AM/PM or 24-hour). |
-| `theme` | `"monochrome"` | `"monochrome"` | Card aesthetic (pure high-contrast black and white). |
+| `hotkey` | String (e.g. `"Alt+T"`) | `"Alt+T"` | Global hotkey combination to manually trigger the HUD. |
 | `run_on_startup` | `true`, `false` | `false` | Automatically launch Time Reminder when Windows boots. |
 
 ## How It Works
@@ -107,7 +107,7 @@ Settings are saved in `config.json` next to `time-reminder.exe`. You can edit th
 git clone https://github.com/Moussax1/time-reminder.git
 cd time-reminder
 
-# Run the test suite (32 unit and integration tests)
+# Run the test suite (33 unit and integration tests)
 cargo test
 
 # Compile optimized release binary

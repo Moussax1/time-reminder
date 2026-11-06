@@ -5,15 +5,16 @@ use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, CreateRoundRectRgn, DeleteDC, DeleteObject, GetDC,
-    GetMonitorInfoW, MonitorFromWindow, ReleaseDC, SelectObject, SetWindowRgn, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, ReleaseDC, SelectObject, SetWindowRgn,
+    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
-    GetSystemMetrics, KillTimer, PeekMessageW, RegisterClassW, SetTimer, SetWindowPos, ShowWindow,
-    UpdateLayeredWindow, HCURSOR, HICON, HWND_TOPMOST, MSG, PM_REMOVE, SM_CXSCREEN, SWP_NOACTIVATE,
-    SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
+    GetForegroundWindow, GetSystemMetrics, KillTimer, PeekMessageW, RegisterClassW, SetTimer,
+    SetWindowPos, ShowWindow, UpdateLayeredWindow, HCURSOR, HICON, HWND_TOPMOST, MSG, PM_REMOVE,
+    SM_CXSCREEN, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WNDCLASSW,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 static REGISTER_OVERLAY_CLASS: Once = Once::new();
@@ -33,6 +34,7 @@ pub enum AnimationState {
         start_time: Instant,
         duration: Duration,
     },
+    Preview,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -61,6 +63,10 @@ pub struct OverlayWindow {
     start_y: i32,
     cached_buf: Option<PixelBuffer>,
 }
+
+// SAFETY: Win32 HWND handles are thread-safe identifiers across threads.
+unsafe impl Send for OverlayWindow {}
+unsafe impl Sync for OverlayWindow {}
 
 unsafe extern "system" fn overlay_wndproc(
     hwnd: HWND,
@@ -150,8 +156,17 @@ impl OverlayWindow {
         self.anim_state
     }
 
-    pub fn is_animating(&self) -> bool {
+    pub fn is_visible(&self) -> bool {
         self.anim_state != AnimationState::Hidden
+    }
+
+    pub fn is_animating(&self) -> bool {
+        match self.anim_state {
+            AnimationState::SlideIn { .. }
+            | AnimationState::Hold { .. }
+            | AnimationState::SlideOut { .. } => true,
+            AnimationState::Hidden | AnimationState::Preview => false,
+        }
     }
 
     pub fn calculate_positions(&self) -> (i32, i32, i32) {
@@ -159,7 +174,14 @@ impl OverlayWindow {
         // MONITORINFO is properly initialized with its cbSize before querying.
         unsafe {
             let hwnd_fg = GetForegroundWindow();
-            let hmon = MonitorFromWindow(hwnd_fg, MONITOR_DEFAULTTONEAREST);
+            let mut cursor_pt = POINT::default();
+            let _ = GetCursorPos(&mut cursor_pt);
+
+            let hmon = if !hwnd_fg.is_invalid() {
+                MonitorFromWindow(hwnd_fg, MONITOR_DEFAULTTONEAREST)
+            } else {
+                MonitorFromPoint(cursor_pt, MONITOR_DEFAULTTONEAREST)
+            };
             let mut mi = MONITORINFO {
                 cbSize: std::mem::size_of::<MONITORINFO>() as u32,
                 ..Default::default()
@@ -220,6 +242,55 @@ impl OverlayWindow {
         self.apply_frame(0.0, AnimationPhase::In);
     }
 
+    pub fn set_position(&mut self, pos: &str) {
+        self.position = pos.to_string();
+        self.reposition();
+    }
+
+    pub fn show_preview(&mut self, time_str: &str, ampm_str: &str, session_str: &str, position: &str) {
+        self.position = position.to_string();
+        let buf = render_split_pod_card(time_str, ampm_str, session_str, true);
+        self.cached_buf = Some(buf);
+
+        let (target_x, target_y, start_y) = self.calculate_positions();
+        self.target_pos = (target_x, target_y);
+        self.start_y = start_y;
+        self.anim_state = AnimationState::Preview;
+
+        // Position directly at target coordinates with full opacity
+        // SAFETY: self.hwnd is a valid top-level window. SetWindowPos, ShowWindow, and KillTimer
+        // configure window positioning, visibility, and cancel transient animation timers.
+        unsafe {
+            let _ = KillTimer(self.hwnd, TIMER_ANIM_ID);
+        }
+
+        if let Some(ref buf) = self.cached_buf {
+            self.update_surface(buf, 255, Some(self.target_pos));
+        }
+
+        unsafe {
+            let _ = SetWindowPos(
+                self.hwnd,
+                HWND_TOPMOST,
+                target_x,
+                target_y,
+                self.width,
+                self.height,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
+
+    pub fn hide(&mut self) {
+        self.anim_state = AnimationState::Hidden;
+        // SAFETY: self.hwnd is a valid window handle.
+        unsafe {
+            let _ = KillTimer(self.hwnd, TIMER_ANIM_ID);
+            let _ = ShowWindow(self.hwnd, SW_HIDE);
+        }
+    }
+
     pub fn reposition(&mut self) {
         let (target_x, target_y, start_y) = self.calculate_positions();
         self.target_pos = (target_x, target_y);
@@ -238,7 +309,7 @@ impl OverlayWindow {
 
         let now = Instant::now();
         match self.anim_state {
-            AnimationState::Hidden => false,
+            AnimationState::Hidden | AnimationState::Preview => false,
             AnimationState::SlideIn {
                 start_time,
                 duration,
@@ -322,7 +393,7 @@ impl OverlayWindow {
         };
 
         if let Some(ref buf) = self.cached_buf {
-            self.update_surface(buf, alpha);
+            self.update_surface(buf, alpha, Some((self.target_pos.0, y)));
         }
 
         // SAFETY: self.hwnd is valid; SetWindowPos repositions overlay on screen without taking input focus.
@@ -339,7 +410,7 @@ impl OverlayWindow {
         }
     }
 
-    pub fn update_surface(&self, buf: &PixelBuffer, alpha: u8) {
+    pub fn update_surface(&self, buf: &PixelBuffer, alpha: u8, dst_pos: Option<(i32, i32)>) {
         // SAFETY: All GDI objects (screen_dc, mem_dc, bitmap, old_bmp) are created, selected,
         // and safely deleted or released before returning. Memory copy respects exact buffer bounds.
         unsafe {
@@ -408,10 +479,13 @@ impl OverlayWindow {
                 AlphaFormat: 1, // AC_SRC_ALPHA
             };
 
+            let pt_dst = dst_pos.map(|(x, y)| POINT { x, y });
+            let ppt_dst = pt_dst.as_ref().map(|p| p as *const POINT);
+
             let _ = UpdateLayeredWindow(
                 self.hwnd,
                 screen_dc,
-                None,
+                ppt_dst,
                 Some(&sz),
                 mem_dc,
                 Some(&pt_src),
