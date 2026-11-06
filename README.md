@@ -16,6 +16,7 @@ Time Reminder is a background Windows application that briefly flashes a retro 8
 <p align="center">
 <img src="docs/assets/split-pod-card.png" />
 </p>
+
 ## Features
 
 - **Safe for Anti-Cheat**: Zero process memory modification, zero DirectX/Vulkan/OpenGL hooking, and no DLL injection. Time Reminder renders through the standard Windows desktop window manager as a click-through layered window.
