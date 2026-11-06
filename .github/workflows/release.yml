@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build & Publish Windows Release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run test suite
+        run: cargo test --release
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package Release Asset
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $distDir = "dist/time-reminder-$tag"
+          New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+          
+          Copy-Item "target/release/time-reminder.exe" "$distDir/"
+          Copy-Item "LICENSE" "$distDir/"
+          Copy-Item "README.md" "$distDir/"
+          Copy-Item "TimeReminder.bat" "$distDir/"
+          
+          $cfg = @'
+          {
+            "interval_minutes": 30,
+            "display_duration_secs": 4,
+            "time_format": "12h",
+            "position": "top-center",
+            "hotkey": "Alt+T",
+            "run_on_startup": false
+          }
+          '@
+          [System.IO.File]::WriteAllText("$distDir/config.example.json", $cfg, [System.Text.Encoding]::UTF8)
+          [System.IO.File]::WriteAllText("$distDir/config.json", $cfg, [System.Text.Encoding]::UTF8)
+          
+          $zipPath = "dist/time-reminder-$tag-windows-x64.zip"
+          Compress-Archive -Path "$distDir/*" -DestinationPath $zipPath -Force
+          echo "ZIP_PATH=$zipPath" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_PATH }}
+          generate_release_notes: true
