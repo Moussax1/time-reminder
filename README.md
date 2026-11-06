@@ -13,8 +13,9 @@ Built in pure Rust. Zero hooks, zero DLL injection, 367 KB standalone binary.
 
 Time Reminder is a background Windows application that briefly flashes a retro 8-bit Split Pod Card over your screen at set intervals. It displays the current digital clock alongside your active gaming session time, helping you keep track of time during immersive full-screen gaming sessions without breaking focus.
 
-![Split Pod Card Overlay](docs/assets/split-pod-card.png)
-
+<p align="center">
+<img src="docs/assets/split-pod-card.png" />
+</p>
 ## Features
 
 - **Safe for Anti-Cheat**: Zero process memory modification, zero DirectX/Vulkan/OpenGL hooking, and no DLL injection. Time Reminder renders through the standard Windows desktop window manager as a click-through layered window.
@@ -27,7 +28,9 @@ Time Reminder is a background Windows application that briefly flashes a retro 8
 - **Custom 8-Bit Software Renderer**: Handcrafted arcade bitmap font rendered into a 32bpp BGRA buffer with antialiased rounded pill corners and slide-in animations.
 - **Interactive Retro Settings GUI with Live Preview**: Live on-screen HUD preview that dynamically updates as you configure screen position and clock format in real time, disappearing cleanly when saved or dismissed. Toggle intervals (15m, 30m, 45m, 60m), 12h/24h format, and Windows startup behavior.
 
-![Retro Settings GUI](docs/assets/retro-settings-window.png)
+<p align="center">
+<img src="docs/assets/retro-settings-window.png" />
+</p>
 
 ## Quick Start
 
