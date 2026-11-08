@@ -102,7 +102,17 @@ fn test_tray_registration_and_v4_mode() {
         .unwrap();
 
         let mut tray = TrayIcon::new(hwnd).expect("TrayIcon::new failed");
+        assert_eq!(tray.tooltip(), "Time Reminder");
+        assert!(
+            tray.has_showtip(),
+            "TrayIcon must have NIF_SHOWTIP set for Windows 10/11 standard hover tooltip"
+        );
         assert!(tray.re_add(), "TrayIcon::re_add failed");
+        assert_eq!(tray.tooltip(), "Time Reminder");
+        assert!(
+            tray.has_showtip(),
+            "TrayIcon must retain NIF_SHOWTIP after re_add"
+        );
         drop(tray);
         let _ = DestroyWindow(hwnd);
     }

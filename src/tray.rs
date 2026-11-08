@@ -3,8 +3,8 @@ use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION,
-    NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE,
+    NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateIconIndirect, CreatePopupMenu, DestroyIcon, DestroyMenu,
@@ -107,14 +107,14 @@ impl TrayIcon {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
             uID: 1,
-            uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+            uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,
             uCallbackMessage: WM_TRAYICON,
             hIcon: hicon,
             szTip: [0; 128],
             ..Default::default()
         };
 
-        let tip = "Time Reminder (Gaming HUD)";
+        let tip = "Time Reminder";
         for (i, c) in tip.encode_utf16().enumerate() {
             if i < 127 {
                 nid.szTip[i] = c;
@@ -122,8 +122,9 @@ impl TrayIcon {
         }
 
         // SAFETY: Shell_NotifyIconW registers the tray icon with the Windows shell taskbar notification area.
-        // nid is correctly populated with cbSize, hwnd, callback message, icon handle, and tooltip string.
+        // Delete any pre-existing registration for this hWnd/uID in the current session before adding freshly.
         unsafe {
+            let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
             let added = Shell_NotifyIconW(NIM_ADD, &nid).as_bool();
             if added {
                 log_debug(&format!(
@@ -160,6 +161,22 @@ impl TrayIcon {
             }
             ok
         }
+    }
+
+    /// Returns the active tooltip string configured on the tray icon.
+    pub fn tooltip(&self) -> String {
+        let len = self
+            .nid
+            .szTip
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(self.nid.szTip.len());
+        String::from_utf16_lossy(&self.nid.szTip[..len])
+    }
+
+    /// Returns whether the NIF_SHOWTIP flag is set for Windows 10/11 standard hover tooltips.
+    pub fn has_showtip(&self) -> bool {
+        self.nid.uFlags.contains(NIF_SHOWTIP)
     }
 
     pub fn show_menu(&self, hwnd: HWND, active_interval: u32) -> u32 {

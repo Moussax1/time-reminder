@@ -14,7 +14,11 @@ use time_reminder::tray::{
     CMD_INTERVAL_60, CMD_RESET_SESSION, CMD_SETTINGS, CMD_TEST_NOTIF, NIN_SELECT, WM_TRAYICON,
 };
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{GENERIC_ALL, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::StationsAndDesktops::{
+    OpenDesktopW, OpenWindowStationW, SetProcessWindowStation, SetThreadDesktop,
+    DESKTOP_CONTROL_FLAGS,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, KillTimer,
@@ -88,6 +92,21 @@ fn trigger_time_reminder(overlay: &mut OverlayWindow, tracker: &SessionTracker, 
 }
 
 fn main() {
+    // Ensure the daemon thread is attached to the interactive desktop (WinSta0\Default)
+    // even when launched from Task Scheduler, startup scripts, or background processes.
+    unsafe {
+        if let Ok(winsta) = OpenWindowStationW(w!("WinSta0"), false, GENERIC_ALL.0) {
+            let _ = SetProcessWindowStation(winsta);
+            if let Ok(desktop) = OpenDesktopW(
+                w!("Default"),
+                DESKTOP_CONTROL_FLAGS(0),
+                false,
+                GENERIC_ALL.0,
+            ) {
+                let _ = SetThreadDesktop(desktop);
+            }
+        }
+    }
     enable_dpi_awareness();
     time_reminder::tray::enable_dark_mode_menu();
     let args: Vec<String> = env::args().collect();
