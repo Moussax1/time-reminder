@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 use windows::core::w;
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-    HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_SZ,
+    RegCloseKey, RegCreateKeyW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
 };
 
 const RUN_KEY_SUBKEY: windows::core::PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Run");
@@ -39,9 +39,9 @@ pub fn set_run_on_startup(enable: bool) -> Result<(), String> {
     // Handles are closed with RegCloseKey in all execution branches.
     unsafe {
         let mut hkey = HKEY::default();
-        let res = RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY_SUBKEY, 0, KEY_WRITE, &mut hkey);
+        let res = RegCreateKeyW(HKEY_CURRENT_USER, RUN_KEY_SUBKEY, &mut hkey);
         if res.is_err() {
-            return Err("Failed to open HKCU Run registry key for writing".to_string());
+            return Err("Failed to open or create HKCU Run registry key for writing".to_string());
         }
 
         if enable {

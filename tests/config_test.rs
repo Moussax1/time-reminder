@@ -43,12 +43,16 @@ fn test_run_on_startup_registry_functions() {
 
     // Verify enabling
     let res = set_run_on_startup(true);
-    assert!(res.is_ok());
+    assert!(res.is_ok(), "set_run_on_startup(true) failed: {:?}", res);
     assert!(check_run_on_startup());
 
     // Verify disabling
     let res_disable = set_run_on_startup(false);
-    assert!(res_disable.is_ok());
+    assert!(
+        res_disable.is_ok(),
+        "set_run_on_startup(false) failed: {:?}",
+        res_disable
+    );
     assert!(!check_run_on_startup());
 
     // Restore initial state
