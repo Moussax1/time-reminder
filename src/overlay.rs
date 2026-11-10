@@ -247,7 +247,13 @@ impl OverlayWindow {
         self.reposition();
     }
 
-    pub fn show_preview(&mut self, time_str: &str, ampm_str: &str, session_str: &str, position: &str) {
+    pub fn show_preview(
+        &mut self,
+        time_str: &str,
+        ampm_str: &str,
+        session_str: &str,
+        position: &str,
+    ) {
         self.position = position.to_string();
         let buf = render_split_pod_card(time_str, ampm_str, session_str, true);
         self.cached_buf = Some(buf);

@@ -4,7 +4,9 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 use time_reminder::config::{load_config, save_config, Config};
-use time_reminder::detector::{detect_game_fullscreen, format_session, SessionTracker};
+use time_reminder::detector::{
+    detect_game_fullscreen_filtered, format_session, SessionTracker, IDLE_ACTIVE_THRESHOLD,
+};
 use time_reminder::enable_dpi_awareness;
 use time_reminder::overlay::OverlayWindow;
 use time_reminder::renderer::format_clock;
@@ -29,6 +31,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 const WM_APP_TRAY_GUI: u32 = WM_APP + 200;
 const WM_APP_TRAY_MENU: u32 = WM_APP + 201;
+const WM_APP_RE_ADD_TRAY: u32 = WM_APP + 202;
+
+static WM_TASKBAR_CREATED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn get_config_path() -> PathBuf {
     if let Ok(exe_path) = env::current_exe() {
@@ -68,11 +73,24 @@ unsafe extern "system" fn main_wndproc(
             } else if event == NIN_SELECT {
                 log_debug("main_wndproc: Left-click received -> posting WM_APP_TRAY_GUI");
                 let _ = SetForegroundWindow(hwnd);
-                let _ = PostMessageW(hwnd, WM_APP_TRAY_GUI, wparam, lparam);
+                let _ = PostMessageW(
+                    hwnd,
+                    WM_APP_TRAY_GUI,
+                    windows::Win32::Foundation::WPARAM(0),
+                    lparam,
+                );
             }
             LRESULT(0)
         }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        _ => {
+            let taskbar_msg = WM_TASKBAR_CREATED.load(std::sync::atomic::Ordering::Relaxed);
+            if taskbar_msg != 0 && msg == taskbar_msg {
+                log_debug("main_wndproc: TaskbarCreated broadcast received from Explorer -> posting WM_APP_RE_ADD_TRAY");
+                let _ = PostMessageW(hwnd, WM_APP_RE_ADD_TRAY, wparam, lparam);
+                return LRESULT(0);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
     }
 }
 
@@ -113,7 +131,30 @@ fn main() {
     let config_path = get_config_path();
     let mut config = load_config(&config_path);
 
-    // Enforce single instance: if another instance is already running, signal it to open settings and exit
+    // Clean CLI exit flag
+    if args.iter().any(|a| a == "--exit" || a == "--quit") {
+        unsafe {
+            if let Ok(existing_hwnd) = windows::Win32::UI::WindowsAndMessaging::FindWindowW(
+                w!("TimeReminderDaemonClass"),
+                None,
+            ) {
+                if !existing_hwnd.is_invalid() {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        existing_hwnd,
+                        windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
+                    println!("Sent exit signal to running Time Reminder daemon.");
+                    return;
+                }
+            }
+        }
+        println!("No running Time Reminder daemon found.");
+        return;
+    }
+
+    // Enforce single instance: if another instance is already running, restore tray icon, signal it to open settings and exit
     // (Exempt --test-overlay so animation tests can run freely without interrupting the background daemon)
     if !args.iter().any(|a| a == "--test-overlay") {
         unsafe {
@@ -122,11 +163,11 @@ fn main() {
                 None,
             ) {
                 if !existing_hwnd.is_invalid() {
-                    println!("Time Reminder daemon is already running. Focusing settings on active instance.");
+                    println!("Time Reminder daemon is already running. Restoring tray icon and focusing settings on active instance.");
                     let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
                         existing_hwnd,
                         WM_APP_TRAY_GUI,
-                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::WPARAM(1),
                         windows::Win32::Foundation::LPARAM(0),
                     );
                     return;
@@ -234,6 +275,7 @@ fn main() {
         }
 
         let wm_taskbar_created = RegisterWindowMessageW(w!("TaskbarCreated"));
+        WM_TASKBAR_CREATED.store(wm_taskbar_created, std::sync::atomic::Ordering::Relaxed);
         let mut tray = match TrayIcon::new(hwnd) {
             Ok(t) => t,
             Err(e) => {
@@ -266,14 +308,36 @@ fn main() {
             if msg.hwnd == overlay.hwnd() {
                 overlay.update();
             } else if msg.message == WM_TIMER && msg.wParam.0 == 100 {
-                let (playing, game_pid) = detect_game_fullscreen();
-                tracker.tick_with_pid(playing, game_pid, Duration::from_secs(1));
+                let (playing, game_pid) = detect_game_fullscreen_filtered(
+                    &config.ignored_processes,
+                    &config.custom_games,
+                );
+                // Sample user input idle duration once per tick
+                let idle_duration = time_reminder::detector::get_idle_duration();
+                let is_active = idle_duration < IDLE_ACTIVE_THRESHOLD;
+
+                if playing && is_active {
+                    // Actively playing: accumulate 1 second of playtime
+                    tracker.tick_with_pid(true, game_pid, Duration::from_secs(1));
+                } else if playing && !is_active {
+                    // In-game but idle (e.g. cutscene, pause screen, short break):
+                    // If AFK for more than 30 minutes, reset session so leaving game overnight doesn't linger
+                    if idle_duration >= Duration::from_secs(1800) {
+                        tracker.reset();
+                    } else {
+                        tracker.tick_with_pid(true, game_pid, Duration::ZERO);
+                    }
+                } else {
+                    // Not in a game (e.g. desktop, watching movie, or game closed): advance inactivity towards session reset
+                    tracker.tick_with_pid(false, None, Duration::from_secs(1));
+                }
 
                 let elapsed_secs = tracker.elapsed_playtime().as_secs();
                 let interval_secs = (config.interval_minutes as u64) * 60;
 
-                // Check interval trigger (only when playing and interval reached)
+                // Check interval trigger (only when playing actively and interval reached)
                 if playing
+                    && is_active
                     && interval_secs > 0
                     && elapsed_secs > 0
                     && elapsed_secs.is_multiple_of(interval_secs)
@@ -336,6 +400,10 @@ fn main() {
                     _ => {}
                 }
             } else if msg.message == WM_APP_TRAY_GUI {
+                // If activated from an external second instance (wParam == 1), ensure tray icon is restored
+                if msg.wParam.0 == 1 {
+                    let _ = tray.re_add();
+                }
                 // Left-click -> Retro Settings GUI
                 log_debug("Opening 8-Bit Retro Settings GUI...");
                 overlay.hide();
@@ -382,7 +450,8 @@ fn main() {
                         log_debug("Retro Settings GUI cancelled/closed.");
                     }
                 }
-            } else if wm_taskbar_created != 0 && msg.message == wm_taskbar_created {
+            } else if msg.message == WM_APP_RE_ADD_TRAY {
+                log_debug("Re-adding tray icon after Explorer restart (TaskbarCreated)...");
                 let _ = tray.re_add();
             }
 

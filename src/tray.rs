@@ -123,27 +123,41 @@ impl TrayIcon {
 
         // SAFETY: Shell_NotifyIconW registers the tray icon with the Windows shell taskbar notification area.
         // Delete any pre-existing registration for this hWnd/uID in the current session before adding freshly.
+        // When the shell or system is busy (e.g. logon or explorer initialization), NIM_ADD can fail with
+        // 0x80004005 (E_FAIL); retry up to 3 times with a short pause to ensure reliable registration.
+        let mut registered = false;
         unsafe {
             let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
-            let added = Shell_NotifyIconW(NIM_ADD, &nid).as_bool();
-            if added {
-                log_debug(&format!(
-                    "Shell_NotifyIconW NIM_ADD succeeded (cbSize: {})",
-                    nid.cbSize
-                ));
-                nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-                let ver_res = Shell_NotifyIconW(NIM_SETVERSION, &nid);
-                log_debug(&format!(
-                    "Shell_NotifyIconW NIM_SETVERSION(4) returned {}",
-                    ver_res.as_bool()
-                ));
-            } else {
+            for attempt in 1..=3 {
+                let added = Shell_NotifyIconW(NIM_ADD, &nid).as_bool();
+                if added {
+                    log_debug(&format!(
+                        "Shell_NotifyIconW NIM_ADD succeeded on attempt {} (cbSize: {})",
+                        attempt, nid.cbSize
+                    ));
+                    nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+                    let ver_res = Shell_NotifyIconW(NIM_SETVERSION, &nid);
+                    log_debug(&format!(
+                        "Shell_NotifyIconW NIM_SETVERSION(4) returned {}",
+                        ver_res.as_bool()
+                    ));
+                    registered = true;
+                    break;
+                }
                 let err = windows::Win32::Foundation::GetLastError();
                 log_debug(&format!(
-                    "[WARN] Shell_NotifyIconW NIM_ADD failed. LastError: {:?}",
-                    err
+                    "[WARN] Shell_NotifyIconW NIM_ADD attempt {} failed. LastError: {:?}",
+                    attempt, err
                 ));
+                std::thread::sleep(std::time::Duration::from_millis(150));
             }
+        }
+
+        if !registered {
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(hicon);
+            }
+            return Err(windows::core::Error::from_win32());
         }
 
         Ok(Self { nid, hicon })
@@ -151,15 +165,24 @@ impl TrayIcon {
 
     pub fn re_add(&mut self) -> bool {
         // SAFETY: Re-registers tray icon with explorer if explorer.exe restarts (TaskbarCreated message).
+        // Retries up to 3 times to allow newly created explorer taskbar shell window to finish initializing.
         unsafe {
             let _ = Shell_NotifyIconW(NIM_DELETE, &self.nid);
-            let ok = Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool();
-            if ok {
-                self.nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-                let _ = Shell_NotifyIconW(NIM_SETVERSION, &self.nid);
-                log_debug("TrayIcon re-added successfully");
+            for attempt in 1..=3 {
+                let ok = Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool();
+                if ok {
+                    self.nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+                    let _ = Shell_NotifyIconW(NIM_SETVERSION, &self.nid);
+                    log_debug(&format!(
+                        "TrayIcon re-added successfully (attempt {})",
+                        attempt
+                    ));
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(150));
             }
-            ok
+            log_debug("[WARN] TrayIcon re_add failed after 3 attempts");
+            false
         }
     }
 

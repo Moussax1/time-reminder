@@ -23,7 +23,7 @@ fn test_config_serialization_roundtrip() {
 
 #[test]
 fn test_run_on_startup_backward_compatibility() {
-    // Legacy JSON without run_on_startup key
+    // Legacy JSON without run_on_startup, ignored_processes, or custom_games
     let legacy_json = r#"{
         "interval_minutes": 15,
         "display_duration_secs": 4,
@@ -34,6 +34,8 @@ fn test_run_on_startup_backward_compatibility() {
     let loaded: time_reminder::config::Config = serde_json::from_str(legacy_json).unwrap();
     assert_eq!(loaded.interval_minutes, 15);
     assert!(!loaded.run_on_startup);
+    assert!(loaded.ignored_processes.is_empty());
+    assert!(loaded.custom_games.is_empty());
 }
 
 #[test]

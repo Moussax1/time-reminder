@@ -19,6 +19,10 @@ pub struct Config {
     pub hotkey: String,      // "Alt+T"
     #[serde(default)]
     pub run_on_startup: bool,
+    #[serde(default)]
+    pub ignored_processes: Vec<String>,
+    #[serde(default)]
+    pub custom_games: Vec<String>,
 }
 
 impl Default for Config {
@@ -30,6 +34,8 @@ impl Default for Config {
             position: "top-center".to_string(),
             hotkey: "Alt+T".to_string(),
             run_on_startup: false,
+            ignored_processes: Vec::new(),
+            custom_games: Vec::new(),
         }
     }
 }

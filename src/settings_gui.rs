@@ -17,9 +17,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostQuitMessage, RegisterClassW, SendMessageW, SetCursor, SetForegroundWindow, SetTimer,
     SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, UpdateLayeredWindow, HICON,
     HTCAPTION, HWND_TOPMOST, IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA,
-    SWP_SHOWWINDOW, SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA, WM_ACTIVATE,
-    WM_CLOSE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NULL, WM_QUIT,
-    WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SWP_SHOWWINDOW, SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA, WM_ACTIVATE, WM_CLOSE,
+    WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NULL, WM_QUIT, WM_SETCURSOR,
+    WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 // Rect for button hit-testing
@@ -72,11 +72,8 @@ static REGISTER_SETTINGS_CLASS: Once = Once::new();
 pub fn update_preview_hud(overlay: &mut OverlayWindow, cfg: &Config, session_str: &str) {
     // Windows local time via SystemTime conversion
     let local = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    let (time_str, ampm_str) = crate::renderer::format_clock(
-        local.wHour as u32,
-        local.wMinute as u32,
-        &cfg.time_format,
-    );
+    let (time_str, ampm_str) =
+        crate::renderer::format_clock(local.wHour as u32, local.wMinute as u32, &cfg.time_format);
     overlay.show_preview(&time_str, &ampm_str, session_str, &cfg.position);
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "time-reminder"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Ultra-lightweight Windows native in-game time reminder with 8-bit retro split pod card"
 license = "MIT"
@@ -26,6 +26,7 @@ features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_XboxController",
     "Win32_UI_Shell",
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
